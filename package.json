@@ -1,0 +1,20 @@
+{
+  "name": "owa-calendar-bridge",
+  "version": "1.1.0",
+  "description": "Manual OWA to Google Calendar synchronization using Tampermonkey and personal Google Apps Script.",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node build-install.cjs",
+    "check:sharing": "node audit-sharing.cjs",
+    "test:core": "node tests.cjs",
+    "test:ui": "node ui-tests.cjs",
+    "test": "npm run build && npm run test:core && npm run test:ui && npm run check:sharing"
+  },
+  "devDependencies": {
+    "jsdom": "27.0.1"
+  }
+}
