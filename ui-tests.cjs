@@ -72,8 +72,24 @@ function fixture(configured = true) {
   try{
     assert.equal(guide.window.document.getElementById('userscript').value,source);assert.equal(guide.window.document.getElementById('receiver').value,fs.readFileSync(path.join(__dirname,'GoogleCalendarBridge.gs'),'utf8'));
     guide.window.document.execCommand=()=>true;
+    guide.window.document.querySelector('[data-copy="userscript"]').click();await pause();assert.ok(guide.window.document.getElementById('toast').textContent.includes('Сначала укажите адрес'));
+    const address=guide.window.document.getElementById('owa-address');
+    const enter=value=>{address.value=value;address.dispatchEvent(new guide.window.Event('input',{bubbles:true}));};
+    enter('https://mail.team.example.com/owa/#path=/calendar');
+    const prepared=guide.window.document.getElementById('userscript').value;
+    assert.ok(prepared.includes('// @match        https://mail.team.example.com/owa/*'));
+    assert.ok(prepared.includes('// @exclude      https://mail.team.example.com/owa/calendar/*'));
+    assert.ok(!prepared.includes('// @match        https://*/owa/*'));
+    assert.ok(!prepared.includes('#path=/calendar'));
     guide.window.document.querySelector('[data-copy="userscript"]').click();await pause();assert.ok(guide.window.document.getElementById('toast').textContent.includes('Код скопирован'));
     console.log('PASS installation artifact contains exact current scripts');
+    console.log('PASS installer requires OWA address and restricts script matching to that host');
+    for(const value of ['http://owa.example.com/owa/','https://owa.example.com/owa/calendar/published/calendar.html','https://outlook.office.com/mail/','https://user:pass@owa.example.com/owa/']){
+      enter(value);assert.ok(guide.window.document.getElementById('owa-hint').classList.contains('error'));
+      assert.equal(guide.window.document.getElementById('userscript').value,source);
+    }
+    enter('https://owa.example.com/');assert.ok(guide.window.document.getElementById('userscript').value.includes('// @match        https://owa.example.com/owa/*'));
+    console.log('PASS installer rejects unsafe or unsupported addresses and resets stale prepared code');
   }finally{guide.window.close();}
-  console.log('\n8 UI/installation checks passed');
+  console.log('\n10 UI/installation checks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Мой календарь · установка</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#182230;font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+    main{max-width:900px;margin:48px auto;padding:0 24px 65px}.eyebrow{color:#1769e0;font-weight:650;font-size:13px;letter-spacing:.07em}
+    h1{font-size:36px;line-height:1.2;letter-spacing:-1px;margin:12px 0}h2{font-size:21px;line-height:1.35;margin:0 0 12px}h3{font-size:16px;margin:18px 0 8px}
+    .intro{color:#475467;margin-bottom:24px}.step{background:#fff;border:1px solid #e4e7ec;border-radius:16px;padding:25px;margin:16px 0}
+    .number{color:#1769e0;font-weight:700;font-size:12px;margin-bottom:7px}p{margin:10px 0}ol,ul{padding-left:24px}li{padding-left:3px;margin:8px 0}
+    button,a.button{display:inline-block;font:600 14px/1.4 system-ui;background:#1769e0;color:#fff;border:0;border-radius:9px;padding:12px 16px;text-decoration:none;cursor:pointer;margin:7px 8px 0 0}
+    button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #84adff;outline-offset:3px}.secondary{background:#eef4ff!important;color:#175cd3!important}
+    .small{font-size:13px;color:#667085}code{font-size:13px;background:#f2f4f7;padding:3px 6px;border-radius:4px;overflow-wrap:anywhere}
+    a{color:#1769e0}details{margin-top:16px}summary{cursor:pointer;color:#475467}textarea{display:block;width:100%;height:220px;font:12px/1.5 monospace;border:1px solid #d0d5dd;border-radius:8px;margin-top:12px;padding:10px}
+    label{display:block;font-weight:600;margin-top:14px}input{display:block;width:100%;font:15px system-ui;border:1px solid #98a2b3;border-radius:9px;padding:12px;margin-top:7px}
+    .note{background:#eef4ff;border-radius:10px;padding:14px 16px}.error{color:#b42318!important}.success{color:#067647!important}table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;border-bottom:1px solid #eaecf0;padding:10px 8px}
+    #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#182230;color:white;border-radius:10px;padding:12px 20px;box-shadow:0 4px 20px #0002;max-width:90vw;font-size:14px}
+    footer{font-size:13px;color:#667085;margin-top:24px}.pill{display:inline-block;background:#e8f6ed;color:#166534;font-size:13px;border-radius:100px;padding:4px 10px;margin-top:12px}
+    @media(max-width:560px){main{margin-top:26px;padding:0 15px 45px}h1{font-size:29px}.step{padding:20px}button,a.button{margin-right:3px}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">OWA → GOOGLE КАЛЕНДАРЬ · 1.2.0</div>
+  <h1>Рабочие встречи рядом с личными</h1>
+  <p class="intro">Установите кнопку один раз. Дальше: рабочий VPN включён, OWA открыт — нажмите «Синхронизировать».</p>
+  <div class="note">Каждый пользователь создаёт собственный обработчик Google и ключ. Для установки не нужны терминал, Node.js или консоль браузера. Ссылка с ключом остаётся только у вас.</div>
+
+  <section class="step">
+    <div class="number">ШАГ 1 · БРАУЗЕР</div>
+    <h2>Установите Tampermonkey</h2>
+    <ol>
+      <li>Откройте официальный сайт ниже в том браузере, где пользуетесь рабочей почтой.</li>
+      <li>Выберите Chrome, Microsoft Edge или Firefox. У обычной версии Tampermonkey нажмите <b>Get from Store</b>.</li>
+      <li>В магазине нажмите <b>«Установить» / «Добавить»</b> и подтвердите установку.</li>
+      <li>В Chrome/Edge откройте значок пазла «Расширения» и закрепите Tampermonkey.</li>
+    </ol>
+    <a class="button secondary" href="https://www.tampermonkey.net/" target="_blank" rel="noopener noreferrer">Официальный сайт Tampermonkey</a>
+    <h3>Разрешение запуска в Chrome/Edge</h3>
+    <p><b>Chrome:</b> откройте <code>chrome://extensions/</code> → Tampermonkey → <b>«Сведения»</b> → включите <b>«Разрешить пользовательские скрипты / Allow User Scripts»</b>. Если такого переключателя нет, включите <b>«Режим разработчика»</b> в общем списке расширений.</p>
+    <p><b>Edge:</b> откройте <code>edge://extensions/</code> и включите доступный переключатель пользовательских скриптов либо <b>«Режим разработчика»</b>. Проверьте доступ расширения к сайту OWA. В Firefox настройки Chrome не нужны.</p>
+    <p class="small">Нужные внутренние адреса браузера вводятся в адресную строку. <a href="https://www.tampermonkey.net/faq.php?q=Q209" target="_blank" rel="noopener noreferrer">Официальная инструкция разрешений</a>. Если настройки заблокированы рабочей политикой, потребуется помощь администратора.</p>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 2 · ВАША РАБОЧАЯ ПОЧТА</div>
+    <h2>Укажите адрес OWA</h2>
+    <ol>
+      <li>Включите рабочее подключение, откройте OWA и войдите обычным способом, с сертификатом, если он требуется.</li>
+      <li>Скопируйте адрес из адресной строки и вставьте ниже. <code>owa.example.com</code> — пример, нужен сервер вашей организации.</li>
+    </ol>
+    <label for="owa-address">Адрес вашей почты OWA</label>
+    <input id="owa-address" type="url" autocomplete="off" spellcheck="false" placeholder="https://owa.example.com/owa/" aria-describedby="owa-hint">
+    <p id="owa-hint" class="small" role="status">Адрес используется локально, чтобы ограничить запуск скрипта вашим сервером. Внешних запросов эта страница не делает.</p>
+    <p class="small">Нужна обычная почта с путём <code>/owa/</code>. Параметры отображения и <code>#path=/calendar</code> будут убраны. Ссылки опубликованного календаря <code>calendar.html</code> и <code>calendar.ics</code> не подходят. Пароль, сертификат или cookie здесь не нужны.</p>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 3 · КНОПКА В OWA</div>
+    <h2>Добавьте userscript в Tampermonkey</h2>
+    <ol>
+      <li>После указания OWA нажмите <b>«Скопировать userscript»</b>.</li>
+      <li>Нажмите значок Tampermonkey → <b>«Создать новый скрипт»</b>. В панели управления также можно нажать вкладку «+».</li>
+      <li>Щёлкните внутри редактора → <b>Ctrl+A → Ctrl+V</b>: замените весь шаблон скопированным кодом.</li>
+      <li>Сохраните <b>Ctrl+S</b>. Скрипт «OWA → Google: мой календарь» должен быть включён.</li>
+      <li>Вернитесь в OWA и обновите вкладку <b>F5</b>. Справа снизу появится панель.</li>
+    </ol>
+    <button data-copy="userscript">Скопировать userscript</button>
+    <button class="secondary" data-download="userscript">Скачать .user.js</button>
+    <p class="small">При повторной установке обновляйте существующий скрипт, сохраняя его настройки.</p>
+    <details><summary>Посмотреть код для моего сервера</summary><textarea id="userscript" readonly spellcheck="false" aria-label="Код userscript"></textarea></details>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 4 · ПРОВЕРКА OWA</div>
+    <h2>Проверьте чтение встреч</h2>
+    <p>На новой панели в рабочей почте нажмите <b>«Просмотр»</b>. Дождитесь сообщения о количестве встреч и проверьте их названия. На этом шаге встречи в Google не отправляются.</p>
+    <p class="small">Если кнопки нет, проверьте разрешение запуска Tampermonkey, доступ к сайту OWA, сохранение скрипта и адрес сервера. Для работы нужна обычная авторизованная почта.</p>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 5 · ВАШ GOOGLE АККАУНТ</div>
+    <h2>Создайте собственный обработчик</h2>
+    <ol>
+      <li>Откройте Apps Script по кнопке ниже. По аватару справа сверху проверьте нужный Google аккаунт.</li>
+      <li>Нажмите <b>«Новый проект»</b>. Назовите его, например, <b>OWA Calendar Bridge</b>.</li>
+      <li>Нажмите здесь <b>«Скопировать обработчик Google»</b>.</li>
+      <li>В Apps Script откройте <b>Код.gs / Code.gs</b>, щёлкните в редакторе → <b>Ctrl+A → Ctrl+V</b>, затем сохраните <b>Ctrl+S</b>.</li>
+    </ol>
+    <a class="button secondary" href="https://script.google.com/home/start" target="_blank" rel="noopener noreferrer">Открыть Apps Script</a>
+    <button data-copy="receiver">Скопировать обработчик Google</button>
+    <details><summary>Посмотреть код обработчика</summary><textarea id="receiver" readonly spellcheck="false" aria-label="Код обработчика Google"></textarea></details>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 6 · РАЗВЕРТЫВАНИЕ GOOGLE</div>
+    <h2>Разверните веб-приложение</h2>
+    <ol>
+      <li>Справа сверху: <b>«Начать развертывание / Deploy» → «Новое развертывание»</b>.</li>
+      <li>У выбора типа нажмите шестерёнку → <b>«Веб-приложение / Web app»</b>.</li>
+      <li>Выставьте параметры из таблицы и нажмите <b>«Развернуть»</b>.</li>
+      <li>Если запрошена авторизация, выберите свой аккаунт и разрешите своему проекту доступ к календарям.</li>
+      <li>Скопируйте выданный URL веб-приложения, заканчивающийся на <b>/exec</b>. Сохраните его у себя для следующего шага.</li>
+    </ol>
+    <table><tr><th>Поле</th><th>Значение</th></tr><tr><td>Выполнять от имени / Execute as</td><td><b>Я / Me</b></td></tr><tr><td>У кого есть доступ / Who has access</td><td><b>Все / Anyone</b>, включая пользователей без входа в Google</td></tr></table>
+    <p class="small">Google может попросить дополнительные подтверждения для собственного непроверенного проекта. Проверьте, что это созданный вами проект. При блокировке политикой организации обратитесь к администратору. Разрешение Google шире одного календаря, а сам код работает с календарём копий «Работа».</p>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 7 · КЛЮЧ ПОДКЛЮЧЕНИЯ</div>
+    <h2>Запустите setup</h2>
+    <ol>
+      <li>Вернитесь в редактор Apps Script. В списке функций рядом с «Выполнить» и «Отладка» выберите <code>setup</code>.</li>
+      <li>Нажмите <b>«Выполнить / Run»</b>. При запросе завершите авторизацию своего проекта.</li>
+      <li>Откройте <b>«Журнал выполнения»</b> и дождитесь завершения. Будет создан календарь «Работа» и выведены данные подключения.</li>
+    </ol>
+    <p><b>Если выведена готовая ссылка</b> вида <code>https://script.google.com/macros/s/…/exec#ключ</code>, скопируйте её целиком.</p>
+    <p><b>Если выведен только ключ</b>, допишите к своему адресу <code>/exec</code> с предыдущего шага знак <code>#</code>, затем ключ без пробелов. Ключ состоит из 64 символов.</p>
+    <p class="small">Существующий ключ можно показать функцией <code>showConnectionKey</code>. Выбор функции сверху обязателен: добавление кода не переключает выбранную функцию автоматически. Храните ссылку с ключом у себя.</p>
+  </section>
+
+  <section class="step">
+    <div class="number">ШАГ 8 · ПЕРВАЯ СИНХРОНИЗАЦИЯ</div>
+    <h2>Подключите Google в OWA</h2>
+    <ol>
+      <li>На панели в OWA нажмите <b>⚙</b>.</li>
+      <li>Вставьте свою полную ссылку <code>/exec#ключ</code>, выберите 30, 60 или 90 дней вперёд и нажмите <b>«Сохранить»</b>.</li>
+      <li>Нажмите <b>«Синхронизировать»</b>. При запросе Tampermonkey разрешите обращения к <code>script.google.com</code> и <code>script.googleusercontent.com</code>.</li>
+      <li>Дождитесь сообщения <b>«Готово»</b>.</li>
+      <li>Откройте Google Календарь в том же аккаунте. Обновите страницу, найдите слева календарь <b>«Работа»</b>, включите его и откройте дату встречи.</li>
+    </ol>
+    <a class="button secondary" href="https://calendar.google.com/" target="_blank" rel="noopener noreferrer">Открыть Google Календарь</a>
+    <p><span class="pill">Теперь — одна кнопка, когда OWA доступен</span></p>
+  </section>
+
+  <details><summary>Google требует входа или ссылка не подходит</summary>
+    <p>Нужна ссылка <code>/exec#ключ</code>. Адрес из окна развертывания сам по себе ключа не содержит.</p>
+    <p>Если Google требует входа: <b>Управление развертываниями → своё веб-приложение → карандаш</b>. Выполнять от имени: <b>Я</b>. Доступ: <b>Все, включая пользователей без входа</b>. Сохраните настройки существующего развертывания.</p>
+    <p>Контроль: свой адрес <code>/exec</code> без ключа в окне инкогнито должен показывать JSON с <code>OWA Calendar Bridge</code>, без запроса входа.</p>
+  </details>
+  <details><summary>Как работают обновления и отмены</summary>
+    <p>Обновляются последние 7 дней и выбранный период вперёд. Серии копируются отдельными событиями. Между запусками изменения не поступают. Участники, приглашения и вложения не переносятся.</p>
+    <p>Отсутствующие встречи удаляются после полного успешного чтения OWA и успешной отправки копий. Если список неполный или возникла ошибка, очистка не запускается.</p>
+  </details>
+  <details><summary>Передать коллеге или обновить скрипт</summary>
+    <p>Передавайте исходный архив или ссылку на репозиторий. Каждый коллега создаёт свой обработчик и ключ. Личные ссылки <code>/exec#ключ</code>, cookie и экспорты реальных встреч не передавайте.</p>
+    <p>При обновлении замените существующий userscript в Tampermonkey. Для Google сохраните новый код и обновите существующее развертывание до новой версии.</p>
+  </details>
+  <footer>
+    Подробная инструкция: README.md из архива или <a href="https://github.com/mainiken/owa-calendar-bridge#readme" target="_blank" rel="noopener noreferrer">README на GitHub</a>. Данные и разрешения: SECURITY.md.
+    <br>Используйте для рабочих данных, перенос которых разрешён организацией. <a href="https://developers.google.com/apps-script/guides/web" target="_blank" rel="noopener noreferrer">Документация Google</a>.
+  </footer>
+</main>
+<div id="toast" hidden role="status"></div>
+<script>
+const files={userscript:'{{USERSCRIPT_BASE64}}',receiver:'{{RECEIVER_BASE64}}'};
+const decode=value=>new TextDecoder().decode(Uint8Array.from(atob(value),char=>char.charCodeAt(0)));
+const originalScript=decode(files.userscript);
+document.getElementById('userscript').value=originalScript;
+document.getElementById('receiver').value=decode(files.receiver);
+const address=document.getElementById('owa-address');
+const hint=document.getElementById('owa-hint');
+let toastTimer;
+function toast(text){const node=document.getElementById('toast');node.textContent=text;node.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.hidden=true,4500);}
+function prepareScript(required=false){
+  try{
+    if(!address.value.trim()){
+      document.getElementById('userscript').value=originalScript;
+      if(required)throw new Error('Сначала укажите адрес вашей почты OWA на шаге 2.');
+      hint.textContent='Адрес используется локально, чтобы ограничить запуск скрипта вашим сервером.';hint.className='small';return false;
+    }
+    let url;try{url=new URL(address.value.trim());}catch{throw new Error('Нужен полный адрес: https://ваш-сервер/owa/');}
+    if(url.protocol!=='https:'||url.username||url.password)throw new Error('Используйте HTTPS-адрес OWA без пароля и имени пользователя в ссылке.');
+    if(!/^[a-z0-9.-]+$/i.test(url.hostname))throw new Error('Укажите доменное имя сервера OWA.');
+    if(/^\/owa\/calendar(?:\/|$)/i.test(url.pathname)||/calendar\.(?:html|ics)$/i.test(url.pathname))throw new Error('Это опубликованный календарь. Нужен адрес обычной почты /owa/.');
+    if(url.pathname!=='/'&&!/^\/owa(?:\/|$)/i.test(url.pathname))throw new Error('Эта инструкция подходит для OWA с путём /owa/.');
+    const pattern='https://'+url.hostname.toLowerCase()+'/owa/';
+    document.getElementById('userscript').value=originalScript
+      .replace(/^\/\/ @match\s+https:\/\/\*\/owa\/\*$/m,'// @match        '+pattern+'*')
+      .replace(/^\/\/ @exclude\s+https:\/\/\*\/owa\/calendar\/\*$/m,'// @exclude      '+pattern+'calendar/*');
+    hint.textContent='Готово: скрипт будет запускаться на '+url.origin+'/owa/. Теперь скопируйте его на шаге 3.';hint.className='small success';return true;
+  }catch(error){document.getElementById('userscript').value=originalScript;hint.textContent=error.message;hint.className='small error';if(required){toast(error.message);address.focus();}return false;}
+}
+address.addEventListener('input',()=>prepareScript());
+for(const button of document.querySelectorAll('[data-copy]'))button.addEventListener('click',async()=>{
+  if(button.dataset.copy==='userscript'&&!prepareScript(true))return;
+  const area=document.getElementById(button.dataset.copy);
+  try{await navigator.clipboard.writeText(area.value);}catch{
+    area.closest('details').open=true;area.focus();area.select();
+    if(!document.execCommand('copy')){toast('Код выделен. Нажмите Ctrl+C.');return;}
+  }
+  toast('Код скопирован. Вставьте его в редактор и сохраните.');
+});
+for(const button of document.querySelectorAll('[data-download]'))button.addEventListener('click',()=>{
+  if(!prepareScript(true))return;
+  const url=URL.createObjectURL(new Blob([document.getElementById('userscript').value],{type:'text/javascript;charset=utf-8'}));
+  const link=document.createElement('a');link.href=url;link.download='owa-google-sync.user.js';link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+});
+</script>
+</body>
+</html>

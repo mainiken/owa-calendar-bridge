@@ -8,7 +8,7 @@ const RELEASE_FILES = [
 ];
 const REPOSITORY_FILES = [...RELEASE_FILES,
   '.gitignore', '.gitattributes', '.github/workflows/checks.yml',
-  'package.json', 'package-lock.json', 'build-install.cjs',
+  'package.json', 'package-lock.json', 'build-install.cjs', 'installer.template.html',
   'tests.cjs', 'ui-tests.cjs', 'audit-sharing.cjs'
 ];
 
