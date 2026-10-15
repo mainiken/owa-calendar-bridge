@@ -19,7 +19,10 @@ function fixture(configured = true) {
   const sourceItem={ItemId:{Id:'PRIVATE_EXCHANGE_ID'},UID:'PRIVATE_SERIES_UID',Subject:'Планирование команды',Start:'2026-10-15T10:00:00Z',End:'2026-10-15T11:00:00Z',CalendarItemType:'Single'};
   const data = { active:true, failed:false, malformed:false, root:null, storage:{clientId,connection:configured?`https://script.google.com/macros/s/local_fixture/exec#${token}`:'',pastDays:7,futureDays:60,timezone:'Europe/Moscow'} };
   Object.defineProperty(window,'crypto',{value:crypto.webcrypto});window.TextEncoder=TextEncoder;window.Date=FixtureDate;
-  window.GM_getValue=()=>data.storage;window.GM_setValue=(_,value)=>{data.storage=value;};window.GM_registerMenuCommand=()=>{};
+  const values = new Map();
+  window.GM_getValue=(key,fallback)=>key==='owa-google-bridge-v1'?data.storage:values.get(key)??fallback;
+  window.GM_setValue=(key,value)=>{if(key==='owa-google-bridge-v1')data.storage=value;else values.set(key,value);};
+  window.GM_deleteValue=key=>values.delete(key);window.GM_registerMenuCommand=()=>{};
   window.GM_xmlhttpRequest=options=>{const payload=JSON.parse(options.data);googleRequests.push(payload);queueMicrotask(()=>options.onload({responseText:JSON.stringify(server.send(payload))}));};
   const originalAttach=window.Element.prototype.attachShadow;
   window.Element.prototype.attachShadow=function(options){const root=originalAttach.call(this,options);data.root=root;return root;};

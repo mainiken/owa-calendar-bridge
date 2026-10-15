@@ -5,16 +5,17 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const { JSDOM } = require('jsdom');
 const source = fs.readFileSync(path.join(__dirname, 'owa-google-sync.user.js'), 'utf8');
-const { clientId } = require('./tests.cjs');
+const { clientId, token, serverHarness, FixtureDate } = require('./tests.cjs');
 const scope = 'https://www.googleapis.com/auth/calendar.app.created';
 const emailScope = 'https://www.googleapis.com/auth/userinfo.email';
 const requestId = '11111111-2222-4333-8444-555555555555';
 const pause = () => new Promise(resolve => setTimeout(resolve, 10));
 
-function fixture() {
+function fixture(legacy = false) {
   const storage = new Map(), calls = [], events = new Map();
   const auth = { accessToken: 'synthetic-google-access', account: 'synthetic-account', email: 'tester@example.com', expires: Date.now() + 3600000 };
-  storage.set('owa-google-bridge-v1', { clientId, mode: 'oauth', pastDays: 7, futureDays: 60, timezone: 'Europe/Moscow', accounts: {} });
+  const server = serverHarness();
+  storage.set('owa-google-bridge-v1', { clientId, mode: legacy ? 'apps-script' : 'oauth', connection: legacy ? `https://script.google.com/macros/s/local_fixture/exec#${token}` : '', pastDays: 7, futureDays: 60, timezone: 'Europe/Moscow', accounts: {} });
   storage.set('owa-google-auth:owa.example.com', auth);
   const state = { creates: 0, failWrites: false, failList: false, failRead: false, responseCode: null, truncated: false };
   const context = { module: { exports: {} }, location: { hostname: 'owa.example.com' }, crypto: crypto.webcrypto, TextEncoder,
@@ -24,6 +25,10 @@ function fixture() {
       calls.push(options);
       const url = new URL(options.url), body = options.data && JSON.parse(options.data);
       const respond = (status, data) => queueMicrotask(() => options.onload({ status, responseText: data === undefined ? '' : JSON.stringify(data) }));
+      if (url.origin === 'https://script.google.com') {
+        if (state.failWrites && body.op === 'upsert') return queueMicrotask(options.onerror);
+        return respond(200, server.send(body));
+      }
       if (state.responseCode) return respond(state.responseCode, { error: { message: 'must not expose synthetic credential', errors: [{ reason: 'insufficientPermissions' }] } });
       if (url.pathname === '/oauth2/v3/userinfo') return respond(200, { sub: auth.account, email: auth.email });
       if (url.pathname === '/calendar/v3/calendars') { state.creates++; return respond(200, { id: 'dedicated@example.com' }); }
@@ -50,11 +55,40 @@ function fixture() {
   };
   vm.runInNewContext(source, context);
   const item = { key: 'b'.repeat(64), title: 'Synthetic meeting', start: '2026-10-15T10:00:00.000Z', end: '2026-10-15T11:00:00.000Z', allDay: false, description: 'Join https://call.example.com/test', location: '' };
-  const snapshot = { clientId, source: 'owa.example.com', timezone: 'Europe/Moscow', windowStart: '2026-10-08T00:00:00.000Z', windowEnd: '2026-12-01T00:00:00.000Z', complete: true, events: [item] };
-  return { api: context.module.exports, storage, auth, calls, state, events, item, snapshot };
+  const snapshot = { version: 1, clientId, source: 'owa.example.com', timezone: 'Europe/Moscow', windowStart: '2026-10-08T00:00:00.000Z', windowEnd: '2026-12-01T00:00:00.000Z', complete: true, events: [item] };
+  return { api: context.module.exports, storage, auth, calls, state, events, item, snapshot, server };
 }
 
 async function test(name, callback) { await callback(); console.log('PASS ' + name); }
+
+function sourceFixture() {
+  const storage = new Map(), reads = [], state = { failDetails: false, items: Array.from({ length: 170 }, (_, i) => ({
+    ItemId: { Id: `synthetic-source-${i}`, ChangeKey: 'revision-1' }, UID: `synthetic-uid-${i}`, Subject: `Meeting ${i}`,
+    Start: '2026-10-15T10:00:00Z', End: '2026-10-15T11:00:00Z', CalendarItemType: 'Single', note: 'Original description'
+  })) };
+  const context = { module: { exports: {} }, location: { hostname: 'owa.example.com' }, crypto: crypto.webcrypto, TextEncoder,
+    URL, URLSearchParams, Intl, Date: FixtureDate, setTimeout, clearTimeout, AbortController,
+    document: { cookie: 'X-OWA-CANARY=SYNTHETIC_CANARY' },
+    GM_getValue: (key, fallback) => key === 'owa-google-bridge-v1' ? { clientId } : storage.get(key) ?? fallback,
+    GM_setValue: (key, value) => storage.set(key, value),
+    fetch: async (url, options) => {
+      const request = JSON.parse(options.body), find = url.includes('FindItem');
+      if (!find && state.failDetails) return { ok: false, status: 403 };
+      let response;
+      if (find) {
+        const from = Date.parse(request.Body.Paging.StartDate), to = Date.parse(request.Body.Paging.EndDate);
+        const items = state.items.filter(item => Date.parse(item.End) > from && Date.parse(item.Start) < to).map(({ note, ...item }) => item);
+        response = { ResponseCode: 'NoError', RootFolder: { IncludesLastItemInRange: true, Items: items } };
+      } else {
+        const ids = request.Body.ItemIds.map(item => item.Id); reads.push(...ids);
+        response = { ResponseCode: 'NoError', Items: ids.map(id => { const item = state.items.find(item => item.ItemId.Id === id); return { ...item, Body: { BodyType: 'Text', Value: item.note } }; }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ Body: { ResponseMessages: { Items: [response] } } }) };
+    }
+  };
+  vm.runInNewContext(source, context);
+  return { api: context.module.exports, storage, reads, state };
+}
 
 (async () => {
   await test('OAuth creates a dedicated calendar once and repeats without duplicates', async () => {
@@ -152,7 +186,12 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       assert.equal(delivered.requestId, requestId); assert.equal(channel.hasAttribute('data-command'), false);
       assert.ok(!w.location.href.includes('synthetic-token')); send('owa-google-oauth:saved');
       assert.equal(w.location.hash, ''); assert.equal(w.document.getElementById('login').disabled, true);
-      assert.ok(w.document.getElementById('status').textContent.includes('Вернись в OWA'));
+      assert.equal(w.document.getElementById('success-panel').hidden, true, 'Token storage is not yet successful account confirmation');
+      channel.setAttribute('data-response', JSON.stringify({ type: 'owa-google-oauth:connected', requestId, email: 'tester@example.com' }));
+      channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true }));
+      assert.equal(w.document.getElementById('success-panel').hidden, false);
+      assert.equal(w.document.getElementById('login-panel').hidden, true);
+      assert.equal(w.document.getElementById('success-account').textContent, 'tester@example.com');
       await pause();
     } finally { dom.window.close(); }
   });
@@ -160,15 +199,17 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
     const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://owa.example.com/owa/', runScripts: 'outside-only' });
     const storage = new Map();
     storage.set('owa-google-bridge-v1', { clientId, connection: '', futureDays: 60, accounts: { 'synthetic-account': { calendarId: 'saved-calendar' } } });
-    let root, opened;
+    let root, opened, closeAction, closes = 0;
     try {
       const w = dom.window; Object.defineProperty(w, 'crypto', { value: crypto.webcrypto }); w.TextEncoder = TextEncoder;
+      const timeout = w.setTimeout.bind(w);
+      w.setTimeout = (callback, delay, ...args) => { if (delay === 2500) { closeAction = callback; return 0; } return timeout(callback, delay, ...args); };
       w.GM_getValue = (k, d) => storage.get(k) ?? d; w.GM_setValue = (k, v) => storage.set(k, v); w.GM_deleteValue = k => storage.delete(k); w.GM_registerMenuCommand = () => {};
       w.GM_openInTab = (url, options) => {
         opened = { url, options }; const id = new URL(url).hash.slice(1), key = 'owa-google-auth:' + id;
         assert.equal(storage.get(key).status, 'pending');
         storage.set(key, { ...storage.get(key), status: 'complete', accessToken: 'synthetic-tab-access', tokenExpires: Date.now() + 600000 });
-        return { closed: false };
+        return { closed: false, close() { closes++; assert.equal(storage.get('owa-google-auth:owa.example.com').account, 'synthetic-account'); } };
       };
       w.GM_xmlhttpRequest = options => {
         assert.equal(options.url, 'https://www.googleapis.com/oauth2/v3/userinfo');
@@ -187,7 +228,10 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       assert.equal(root.getElementById('save').disabled, false);
       assert.ok(root.getElementById('account').textContent.includes('tester@example.com'));
       assert.equal(storage.get('owa-google-bridge-v1').accounts['synthetic-account'].calendarId, 'saved-calendar');
-      assert.ok(![...storage.keys()].some(key => key.startsWith('owa-google-auth:') && key.endsWith(new URL(opened.url).hash.slice(1))));
+      const receipt = storage.get('owa-google-auth:' + new URL(opened.url).hash.slice(1));
+      assert.equal(receipt.status, 'connected'); assert.equal(receipt.accessToken, undefined);
+      assert.equal(root.getElementById('dialog').hasAttribute('open'), false);
+      assert.equal(closes, 0); closeAction(); assert.equal(closes, 1);
       root.getElementById('oauth-disconnect').click(); assert.equal(storage.has('owa-google-auth:owa.example.com'), false);
       assert.equal(storage.get('owa-google-bridge-v1').accounts['synthetic-account'].calendarId, 'saved-calendar');
     } finally { dom.window.close(); }
@@ -210,7 +254,10 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       assert.equal(button.disabled, false, w.document.getElementById('status').textContent);
       button.click(); assert.ok(tokenOptions);
       assert.equal(storage.get(key).status, 'complete'); assert.equal(storage.get(key).accessToken, 'synthetic-isolated-token');
-      assert.equal(w.location.hash, ''); assert.ok(w.document.getElementById('status').textContent.includes('Вернись в OWA'));
+      assert.equal(w.location.hash, ''); assert.equal(w.document.getElementById('success-panel').hidden, true);
+      storage.set(key, { status: 'connected', email: 'tester@example.com', expires: Date.now() + 10000 });
+      for (let i = 0; i < 100 && w.document.getElementById('success-panel').hidden; i++) await pause();
+      assert.equal(w.document.getElementById('success-panel').hidden, false);
       const channel = w.document.getElementById('owa-google-auth-channel');
       assert.equal(channel.hasAttribute('data-command'), false); assert.equal(channel.hasAttribute('data-response'), false);
       assert.ok(!w.document.documentElement.outerHTML.includes('synthetic-isolated-token'));
@@ -230,5 +277,65 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       assert.ok(index.includes(`href="INSTALL.html?v=${version}"`));
     } finally { dom.window.close(); }
   });
-  console.log('\n13 OAuth checks passed');
+  await test('170 unchanged meetings require zero repeated detail reads and zero Google event writes', async () => {
+    const input = sourceFixture(), target = fixture();
+    const first = await input.api.collect(); assert.equal(first.events.length, 170); assert.equal(input.reads.length, 170);
+    assert.equal((await target.api.syncOAuth(first, target.auth)).created, 170);
+    input.reads.length = 0; const before = target.calls.length;
+    const second = await input.api.collect(); assert.equal(input.reads.length, 0); assert.equal(second.events.length, 170);
+    assert.equal((await target.api.syncOAuth(second, target.auth)).unchanged, 170);
+    const repeatCalls = target.calls.slice(before); assert.equal(repeatCalls.length, 1); assert.equal(repeatCalls[0].method, 'GET');
+    assert.ok(new URL(repeatCalls[0].url).searchParams.get('fields').includes('extendedProperties'));
+    assert.ok(!new URL(repeatCalls[0].url).searchParams.get('fields').includes('description'));
+    input.state.items[0].note = 'Updated call link https://call.example.com/changed';
+    input.state.items[0].ItemId.ChangeKey = 'revision-2'; input.reads.length = 0;
+    const changed = await input.api.collect(); assert.equal(input.reads.length, 1);
+    assert.equal((await target.api.syncOAuth(changed, target.auth)).updated, 1);
+    input.state.items.splice(1, 1); input.reads.length = 0;
+    const cancelled = await input.api.collect(); assert.equal(input.reads.length, 0); assert.equal(cancelled.events.length, 169);
+    assert.equal((await target.api.syncOAuth(cancelled, target.auth)).deleted, 1);
+  });
+  await test('Missing source revision re-reads details and failed reads cannot commit a new cache', async () => {
+    const input = sourceFixture(); await input.api.collect();
+    delete input.state.items[0].ItemId.ChangeKey; input.reads.length = 0;
+    await input.api.collect(); assert.equal(input.reads.length, 1);
+    input.state.items[0].note = 'Description changed without source revision'; input.reads.length = 0;
+    const second = await input.api.collect(); assert.equal(input.reads.length, 1);
+    assert.ok(second.events.some(item => item.description.includes('Description changed without source revision')));
+    const before = JSON.stringify([...input.storage]); input.state.failDetails = true;
+    await assert.rejects(input.api.collect(), /OWA отклонил/);
+    assert.equal(JSON.stringify([...input.storage]), before);
+  });
+  await test('Apps Script skips acknowledged content while preserving cancellation keys and retrying failures', async () => {
+    const f = fixture(true); assert.equal((await f.api.syncAppsScript(f.snapshot)).created, 1);
+    let before = f.calls.length;
+    assert.equal((await f.api.syncAppsScript(f.snapshot)).unchanged, 1);
+    let repeated = f.calls.slice(before).map(call => JSON.parse(call.data));
+    assert.equal(repeated.filter(item => item.op === 'upsert').length, 0); assert.equal(repeated[0].op, 'finalize'); assert.equal(repeated[0].keys.length, 1);
+    f.state.failWrites = true;
+    const changed = { ...f.snapshot, events: [{ ...f.item, title: 'Updated meeting' }] };
+    await assert.rejects(f.api.syncAppsScript(changed));
+    f.state.failWrites = false; before = f.calls.length;
+    assert.equal((await f.api.syncAppsScript(changed)).updated, 1);
+    repeated = f.calls.slice(before).map(call => JSON.parse(call.data)); assert.equal(repeated.filter(item => item.op === 'upsert').length, 1);
+    const receipt = [...f.storage.entries()].find(([key]) => key.startsWith('owa-google-receipts:'))[1];
+    receipt.items[f.item.key].at = 0; before = f.calls.length;
+    await f.api.syncAppsScript(changed); assert.ok(f.calls.slice(before).some(call => JSON.parse(call.data).op === 'upsert'));
+    assert.equal((await f.api.syncAppsScript({ ...changed, events: [] })).deleted, 1);
+  });
+  await test('Failed OWA confirmation cannot display a successful connection', async () => {
+    const dom = new JSDOM(fs.readFileSync(path.join(__dirname, 'connect.html'), 'utf8'), { url: `https://mainiken.github.io/owa-calendar-bridge/connect.html#${requestId}`, runScripts: 'outside-only' });
+    try {
+      const w = dom.window, channel = w.document.getElementById('owa-google-auth-channel'); let callback;
+      w.google = { accounts: { oauth2: { initTokenClient(options) { callback = options.callback; return { requestAccessToken() {} }; }, hasGrantedAllScopes: () => true } } };
+      w.eval(fs.readFileSync(path.join(__dirname, 'connect.js'), 'utf8'));
+      const send = (type, fields = {}) => { channel.setAttribute('data-response', JSON.stringify({ type, requestId, ...fields })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
+      send('owa-google-oauth:ready'); w.document.getElementById('login').click();
+      callback({ access_token: 'synthetic-failed-login-token', expires_in: 3600, scope });
+      send('owa-google-oauth:saved'); send('owa-google-oauth:failed', { message: 'Account verification failed' });
+      assert.equal(w.document.getElementById('success-panel').hidden, true);
+      assert.equal(w.document.getElementById('status').textContent, 'Account verification failed');
+    } finally { dom.window.close(); }
+  });
+  console.log('\n17 OAuth/incremental checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.3.2
+// @version      1.4.0
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
 // @match        https://mainiken.github.io/owa-calendar-bridge/connect.html*
@@ -24,7 +24,7 @@
   'use strict';
   const VERSION = 1;
   const STORAGE = 'owa-google-bridge-v1';
-  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.3.2';
+  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.4.0';
   const AUTH_ORIGIN = 'https://mainiken.github.io';
   const AUTH_PREFIX = 'owa-google-auth:';
   const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
@@ -40,6 +40,7 @@
   let lastSnapshot = null;
   let ui;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const later = (fn, ms) => { const timer = setTimeout(fn, ms); timer?.unref?.(); return timer; };
 
   function loadConfig() {
     const saved = GM_getValue(STORAGE, null);
@@ -64,16 +65,22 @@
     // relying on MessageEvent.source, which may be null/wrapped in extensions.
     document.addEventListener('owa-google-oauth:request', () => {
       const channel = document.getElementById('owa-google-auth-channel');
-      if (!channel || completed) return;
+      if (!channel) return;
       let data;
       try { data = JSON.parse(channel.getAttribute('data-command') || 'null'); } catch { return; }
       channel.removeAttribute('data-command');
       if (!data || data.requestId !== requestId) return;
       const reply = (type, extra = {}) => {
-        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.3.2', ...extra }));
+        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.4.0', ...extra }));
         channel.dispatchEvent(new Event('owa-google-oauth:response', { bubbles: true }));
       };
       const pending = GM_getValue(key, null);
+      if (data.type === 'owa-google-oauth:status' && pending?.expires > Date.now()) {
+        if (pending.status === 'connected') reply('owa-google-oauth:connected', { email: pending.email });
+        else if (pending.status === 'failed') reply('owa-google-oauth:failed', { message: pending.message });
+        return;
+      }
+      if (completed) return;
       if (!pending || pending.status !== 'pending' || pending.expires <= Date.now()) {
         reply('owa-google-oauth:expired'); return;
       }
@@ -107,6 +114,7 @@
     GM_setValue(key, { status: 'pending', expires: Date.now() + 5 * 60000 });
     setBusy(true);
     ui.dialogError.textContent = 'В новой вкладке нажми «Войти через Google», выбери аккаунт и разреши доступ.';
+    let receipt = false;
     try {
       // Open synchronously from the user gesture, before any await.
       const authTab = GM_openInTab(`${AUTH_PAGE}#${requestId}`, { active: true, insert: true });
@@ -124,13 +132,24 @@
       credential.account = account.sub;
       credential.email = account.email;
       GM_setValue(authKey(), credential);
-      saveConfig({ ...config, mode: 'oauth' });
+      saveConfig({ ...config, mode: 'oauth', futureDays: Number(ui.future.value) });
       ui.mode.value = 'oauth';
       ui.dialogError.textContent = '';
       updateAccountLabel();
+      ui.dialog.close();
       status('Google подключён. Нажми «Синхронизировать».');
-    } catch (error) { ui.dialogError.textContent = error.message; }
-    finally { GM_deleteValue(key); setBusy(false); }
+      GM_setValue(key, { status: 'connected', email: account.email, expires: Date.now() + 60000 });
+      receipt = true;
+      later(() => { try { authTab?.close?.(); } catch {} }, 2500);
+    } catch (error) {
+      ui.dialogError.textContent = error.message;
+      GM_setValue(key, { status: 'failed', message: error.message, expires: Date.now() + 60000 });
+      receipt = true;
+    }
+    finally {
+      if (receipt) later(() => GM_deleteValue(key), 60000); else GM_deleteValue(key);
+      setBusy(false);
+    }
   }
 
   // No cookies, corporate identifiers, or Apps Script key are sent to this API.
@@ -178,7 +197,8 @@
     const id = await calendarForAccount(auth), base = `/calendar/v3/calendars/${encodeURIComponent(id)}/events`;
     const owner = await hash(`${config.clientId}\0${SOURCE}`);
     const query = new URLSearchParams({ timeMin: snapshot.windowStart, timeMax: snapshot.windowEnd, maxResults: '2500',
-      singleEvents: 'true', privateExtendedProperty: `owner=${owner}` });
+      singleEvents: 'true', privateExtendedProperty: `owner=${owner}`,
+      fields: 'nextPageToken,items(id,status,start,extendedProperties,recurrence,recurringEventId)' });
     const existing = new Map(), pages = new Set();
     let pageToken = '';
     do {
@@ -197,9 +217,9 @@
     } while (pageToken);
     const totals = { created: 0, updated: 0, unchanged: 0, deleted: 0 };
     const keys = new Set();
-    for (const [index, item] of snapshot.events.entries()) {
+    const changes = [];
+    for (const item of snapshot.events) {
       keys.add(item.key);
-      status(`Отправляю в Google: ${index} / ${snapshot.events.length}`);
       const digest = await hash(JSON.stringify(item));
       const eventId = 'b' + await hash(`${owner}\0${item.key}`);
       let event = existing.get(item.key);
@@ -212,6 +232,11 @@
         }
       }
       if (event && event.extendedProperties.private.digest === digest) { totals.unchanged++; continue; }
+      changes.push({ item, digest, eventId, event });
+    }
+    status(`Без изменений: ${totals.unchanged}. Нужно отправить: ${changes.length}.`);
+    for (const [index, { item, digest, eventId, event }] of changes.entries()) {
+      status(`Отправляю изменения: ${index + 1} / ${changes.length}. Пропущено без изменений: ${totals.unchanged}.`);
       const body = { summary: item.title, description: item.description, location: item.location,
         start: item.allDay ? { date: item.startDate } : { dateTime: item.start },
         end: item.allDay ? { date: item.endDate } : { dateTime: item.end },
@@ -426,10 +451,26 @@
     }
     if (found.size > 1000) throw new Error('Больше 1000 встреч. Уменьши период в настройках.');
     const baseItems = [...found.values()].filter(item => !cancelled(item));
+    const cacheKey = `owa-google-event-cache:${SOURCE}`;
+    const savedCache = GM_getValue(cacheKey, null);
+    const oldCache = savedCache?.version === 1 ? savedCache.items || {} : {};
+    const cache = {}, cached = new Map(), revisions = new Map(), changed = [];
+    for (const base of baseItems) {
+      const id = await hash(base.ItemId.Id);
+      // ChangeKey covers body-only changes. Without it, read details again.
+      const revision = typeof base.ItemId.ChangeKey === 'string' && base.ItemId.ChangeKey
+        ? await hash(JSON.stringify([config.timezone, base.ItemId.ChangeKey, ...LIST_FIELDS.map(name => base[name] ?? null)])) : null;
+      revisions.set(base.ItemId.Id, { id, revision });
+      const entry = oldCache[id];
+      if (revision && entry?.revision === revision && entry.event?.key && entry.event.start && entry.event.end && typeof entry.event.description === 'string') {
+        cached.set(base.ItemId.Id, entry.event); cache[id] = entry;
+      } else changed.push(base);
+    }
+    status(`Встреч ${baseItems.length}: без изменений ${cached.size}, читаю новые и изменённые ${changed.length}.`);
     const details = new Map();
-    for (let offset = 0; offset < baseItems.length; offset += 20) {
-      status(`Читаю описания: ${offset} / ${baseItems.length}`);
-      const batch = baseItems.slice(offset, offset + 20);
+    for (let offset = 0; offset < changed.length; offset += 20) {
+      status(`Читаю новые и изменённые: ${offset} / ${changed.length}. Пропущено: ${cached.size}.`);
+      const batch = changed.slice(offset, offset + 20);
       const messages = await owa('GetItem', { ...TYPE('GetItemRequest'), ItemShape: shape(DETAIL_FIELDS, true),
         ItemIds: batch.map(item => ({ ...TYPE('ItemId'), Id: item.ItemId.Id })) });
       for (const message of messages) {
@@ -439,13 +480,19 @@
     }
     const events = new Map();
     for (const base of baseItems) {
-      const detail = details.get(base.ItemId.Id);
-      if (!detail) throw new Error('Не удалось прочитать одну из встреч. Отправка остановлена; повтори запуск.');
-      const item = { ...base, ...detail };
-      if (cancelled(item)) continue;
-      const event = await normalize(item);
+      let event = cached.get(base.ItemId.Id);
+      if (!event) {
+        const detail = details.get(base.ItemId.Id);
+        if (!detail) throw new Error('Не удалось прочитать одну из встреч. Отправка остановлена; повтори запуск.');
+        const item = { ...base, ...detail };
+        if (cancelled(item)) continue;
+        event = await normalize(item);
+        const { id, revision } = revisions.get(base.ItemId.Id);
+        if (revision) cache[id] = { revision, event };
+      }
       if (new Date(event.end).getTime() > from && new Date(event.start).getTime() < to) events.set(event.key, event);
     }
+    GM_setValue(cacheKey, { version: 1, items: cache });
     return { version: VERSION, source: SOURCE, clientId: config.clientId, timezone: config.timezone,
       windowStart: new Date(from).toISOString(), windowEnd: new Date(to).toISOString(), complete,
       events: [...events.values()].sort((a, b) => a.start.localeCompare(b.start)) };
@@ -487,6 +534,47 @@
     }));
   }
 
+  async function receiptKey() {
+    return `owa-google-receipts:${SOURCE}:${await hash(`${config.clientId}\0${config.connection}`)}`;
+  }
+
+  async function syncAppsScript(snapshot) {
+    const key = await receiptKey();
+    const saved = GM_getValue(key, null);
+    const receipts = saved?.version === 1 ? { ...saved.items } : {};
+    const pending = [], totals = { created: 0, updated: 0, unchanged: 0, deleted: 0 };
+    for (const event of snapshot.events) {
+      const digest = await hash(JSON.stringify(event)), receipt = receipts[event.key];
+      if (receipt?.digest === digest && Date.now() - receipt.at < DAY) totals.unchanged++;
+      else pending.push({ event, digest });
+    }
+    const { events, ...metadata } = snapshot;
+    for (let offset = 0; offset < pending.length; offset += 15) {
+      const batch = pending.slice(offset, offset + 15);
+      status(`Отправляю изменения: ${offset + batch.length} / ${pending.length}. Пропущено без изменений: ${totals.unchanged}.`);
+      const result = await google({ ...metadata, op: 'upsert', events: batch.map(item => item.event) });
+      for (const name of ['created', 'updated', 'unchanged']) totals[name] += result[name] || 0;
+      for (const item of batch) receipts[item.event.key] = { digest: item.digest, at: Date.now() };
+      GM_setValue(key, { version: 1, items: receipts });
+    }
+    if (snapshot.complete) {
+      status('Проверяю отмены и переносы…');
+      const result = await google({ ...metadata, op: 'finalize', keys: events.map(event => event.key) });
+      totals.deleted = result.deleted || 0;
+      const keys = new Set(events.map(event => event.key));
+      for (const id of Object.keys(receipts)) if (!keys.has(id)) delete receipts[id];
+      GM_setValue(key, { version: 1, items: receipts });
+    }
+    return totals;
+  }
+
+  async function resetSyncCache() {
+    if (busy) return;
+    GM_deleteValue(`owa-google-event-cache:${SOURCE}`);
+    GM_deleteValue(await receiptKey());
+    status('Сохранённые версии сброшены. Следующая синхронизация выполнит полную проверку встреч.');
+  }
+
   function status(text, error = false) {
     if (!ui) return;
     ui.status.textContent = text;
@@ -512,18 +600,7 @@
       if (!auth) { connection(config.connection); await google({ op: 'ping', version: VERSION }); }
       const snapshot = await collect();
       lastSnapshot = snapshot;
-      const { events, ...metadata } = snapshot;
-      const totals = auth ? await syncOAuth(snapshot, auth) : { created: 0, updated: 0, unchanged: 0, deleted: 0 };
-      if (!auth) for (let offset = 0; offset < events.length; offset += 15) {
-        status(`Отправляю в Google: ${offset} / ${events.length}`);
-        const result = await google({ ...metadata, op: 'upsert', events: events.slice(offset, offset + 15) });
-        for (const name of ['created', 'updated', 'unchanged']) totals[name] += result[name] || 0;
-      }
-      if (!auth && snapshot.complete) {
-        status('Проверяю отмены и переносы…');
-        const result = await google({ ...metadata, op: 'finalize', keys: events.map(event => event.key) });
-        totals.deleted = result.deleted || 0;
-      }
+      const totals = auth ? await syncOAuth(snapshot, auth) : await syncAppsScript(snapshot);
       status(`Готово: новых ${totals.created}, обновлено ${totals.updated}, без изменений ${totals.unchanged}, удалено ${totals.deleted}.${snapshot.complete ? '' : ' OWA не подтвердил полный список — удаления пропущены.'}`);
     } catch (error) { status(error.message || 'Синхронизация не выполнена.', true); }
     finally { setBusy(false); }
@@ -662,10 +739,11 @@
 
   // The test harness exposes internals only when evaluating this source in an isolated VM.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse, googleApi, syncOAuth, currentAuth, oauthOwned };
+    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse, googleApi, syncOAuth, syncAppsScript, currentAuth, oauthOwned };
   } else {
     GM_setValue(STORAGE, config);
     mount();
     GM_registerMenuCommand('Настройки синхронизации календаря', settings);
+    GM_registerMenuCommand('Полная проверка при следующей синхронизации', resetSyncCache);
   }
 })();

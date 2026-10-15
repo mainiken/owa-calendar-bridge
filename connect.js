@@ -7,7 +7,7 @@
   const requestId = location.hash.slice(1);
   const login = document.getElementById('login'), status = document.getElementById('status');
   const channel = document.getElementById('owa-google-auth-channel');
-  let ready = false, delivered = false, waiting = false, client;
+  let ready = false, delivered = false, waiting = false, client, confirmationTimer;
   const show = (message, style = '') => { status.textContent = message; status.className = style; };
   if (location.origin !== 'https://mainiken.github.io' || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     show('Открой подключение кнопкой «Войти через Google» в настройках OWA. На этой странице нет активного запроса входа.', 'error'); return;
@@ -23,6 +23,20 @@
     try { response = JSON.parse(channel.getAttribute('data-response') || 'null'); } catch { return; }
     channel.removeAttribute('data-response');
     if (response?.requestId !== requestId) return;
+    if (response.type === 'owa-google-oauth:connected' && delivered) {
+      clearInterval(confirmationTimer);
+      document.getElementById('login-panel').hidden = true;
+      document.getElementById('login-help').hidden = true;
+      document.getElementById('success-panel').hidden = false;
+      document.getElementById('success-account').textContent = typeof response.email === 'string' ? response.email : '';
+      show('Подключение подтверждено. Эта вкладка сейчас закроется.', 'success');
+      return;
+    }
+    if (response.type === 'owa-google-oauth:failed' && delivered) {
+      clearInterval(confirmationTimer);
+      show(response.message || 'OWA не смог подтвердить подключение. Закрой вкладку и повтори вход из OWA.', 'error');
+      return;
+    }
     if (response.type === 'owa-google-oauth:expired') {
       clearInterval(timer); login.disabled = true;
       show('Userscript запущен, но запрос входа истёк или открыт из другой копии скрипта. Закрой эту вкладку и начни вход заново кнопкой в OWA. Оставь включённой одну копию userscript.', 'error'); return;
@@ -33,7 +47,15 @@
     }
     if (response.type === 'owa-google-oauth:saved' && waiting) {
       delivered = true; waiting = false; login.disabled = true;
-      show('Доступ передан userscript. Вернись в OWA, дождись сообщения о подключении, затем нажми «Синхронизировать».', 'success');
+      show('Проверяем подключение аккаунта в OWA…');
+      let confirmations = 0;
+      confirmationTimer = setInterval(() => {
+        if (++confirmations > 120) {
+          clearInterval(confirmationTimer);
+          show('OWA пока не подтвердил подключение. Вернись в рабочую вкладку и проверь сообщение в настройках.', 'error'); return;
+        }
+        send({ type: 'owa-google-oauth:status' });
+      }, 500);
       // The nonce is no longer needed and never contains a token.
       history.replaceState(null, '', location.pathname + location.search);
     }
@@ -46,11 +68,12 @@
       return;
     }
     if (checks === 40) {
-      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.3.2, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
+      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.4.0, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
       else if (!window.google?.accounts?.oauth2) show('Не загрузилось окно Google. Проверь доступ к accounts.google.com и блокировщики, затем обнови страницу.', 'error');
     }
     send({ type: 'owa-google-oauth:hello' });
   }, 250);
+  document.getElementById('close').addEventListener('click', () => window.close());
   login.addEventListener('click', () => {
     if (!ready || delivered || waiting || !window.google?.accounts?.oauth2) return;
     client ||= google.accounts.oauth2.initTokenClient({
