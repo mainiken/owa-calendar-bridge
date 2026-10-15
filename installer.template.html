@@ -23,9 +23,10 @@
 </head>
 <body>
 <main>
-  <div class="eyebrow">OWA → GOOGLE КАЛЕНДАРЬ · 1.2.0</div>
+  <div class="eyebrow">OWA → GOOGLE КАЛЕНДАРЬ · 1.2.1</div>
   <h1>Рабочие встречи рядом с личными</h1>
   <p class="intro">Установите кнопку один раз. Дальше: рабочий VPN включён, OWA открыт — нажмите «Синхронизировать».</p>
+  <p class="small">Эта страница работает прямо в браузере — скачивать проект или архив не требуется. <a href="https://github.com/mainiken/owa-calendar-bridge" target="_blank" rel="noopener noreferrer">Исходники на GitHub</a> · <a href="https://github.com/mainiken/owa-calendar-bridge/blob/main/docs/GOOGLE-OAUTH.md" target="_blank" rel="noopener noreferrer">Подготовка входа через Google</a></p>
   <div class="note">Каждый пользователь создаёт собственный обработчик Google и ключ. Для установки не нужны терминал, Node.js или консоль браузера. Ссылка с ключом остаётся только у вас.</div>
 
   <section class="step">
@@ -145,11 +146,11 @@
     <p>Отсутствующие встречи удаляются после полного успешного чтения OWA и успешной отправки копий. Если список неполный или возникла ошибка, очистка не запускается.</p>
   </details>
   <details><summary>Передать коллеге или обновить скрипт</summary>
-    <p>Передавайте исходный архив или ссылку на репозиторий. Каждый коллега создаёт свой обработчик и ключ. Личные ссылки <code>/exec#ключ</code>, cookie и экспорты реальных встреч не передавайте.</p>
+    <p>Передавайте <a href="https://mainiken.github.io/owa-calendar-bridge/">ссылку на эту страницу</a> или на репозиторий. В текущей версии каждый коллега создаёт свой обработчик и ключ. Личные ссылки <code>/exec#ключ</code>, cookie и экспорты реальных встреч не передавайте.</p>
     <p>При обновлении замените существующий userscript в Tampermonkey. Для Google сохраните новый код и обновите существующее развертывание до новой версии.</p>
   </details>
   <footer>
-    Подробная инструкция: README.md из архива или <a href="https://github.com/mainiken/owa-calendar-bridge#readme" target="_blank" rel="noopener noreferrer">README на GitHub</a>. Данные и разрешения: SECURITY.md.
+    <a href="https://github.com/mainiken/owa-calendar-bridge#readme" target="_blank" rel="noopener noreferrer">Подробная инструкция на GitHub</a> · <a href="https://github.com/mainiken/owa-calendar-bridge/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">Данные и разрешения</a>.
     <br>Используйте для рабочих данных, перенос которых разрешён организацией. <a href="https://developers.google.com/apps-script/guides/web" target="_blank" rel="noopener noreferrer">Документация Google</a>.
   </footer>
 </main>

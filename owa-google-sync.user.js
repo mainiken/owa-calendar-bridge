@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.2.0
+// @version      1.2.1
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
 // @exclude      https://*/owa/calendar/*
