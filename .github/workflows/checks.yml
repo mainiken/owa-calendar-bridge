@@ -20,4 +20,4 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
-      - run: git diff --exit-code -- INSTALL.html
+      - run: git diff --exit-code -- INSTALL.html connect.html index.html

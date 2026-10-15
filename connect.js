@@ -35,7 +35,7 @@
       delivered = true; waiting = false; login.disabled = true;
       show('Доступ передан userscript. Вернись в OWA, дождись сообщения о подключении, затем нажми «Синхронизировать».', 'success');
       // The nonce is no longer needed and never contains a token.
-      history.replaceState(null, '', location.pathname);
+      history.replaceState(null, '', location.pathname + location.search);
     }
   });
   let checks = 0;
@@ -46,7 +46,7 @@
       return;
     }
     if (checks === 40) {
-      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.3.1, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
+      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.3.2, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
       else if (!window.google?.accounts?.oauth2) show('Не загрузилось окно Google. Проверь доступ к accounts.google.com и блокировщики, затем обнови страницу.', 'error');
     }
     send({ type: 'owa-google-oauth:hello' });

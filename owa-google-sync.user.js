@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.3.1
+// @version      1.3.2
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
 // @match        https://mainiken.github.io/owa-calendar-bridge/connect.html*
@@ -24,7 +24,7 @@
   'use strict';
   const VERSION = 1;
   const STORAGE = 'owa-google-bridge-v1';
-  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html';
+  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.3.2';
   const AUTH_ORIGIN = 'https://mainiken.github.io';
   const AUTH_PREFIX = 'owa-google-auth:';
   const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
@@ -70,7 +70,7 @@
       channel.removeAttribute('data-command');
       if (!data || data.requestId !== requestId) return;
       const reply = (type, extra = {}) => {
-        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.3.1', ...extra }));
+        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.3.2', ...extra }));
         channel.dispatchEvent(new Event('owa-google-oauth:response', { bubbles: true }));
       };
       const pending = GM_getValue(key, null);

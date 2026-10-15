@@ -183,6 +183,7 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       root.getElementById('oauth-login').click(); assert.equal(root.getElementById('save').disabled, true);
       for (let i = 0; i < 100 && root.getElementById('save').disabled; i++) await pause();
       assert.equal(new URL(opened.url).pathname, '/owa-calendar-bridge/connect.html'); assert.equal(opened.options.active, true);
+      assert.equal(new URL(opened.url).searchParams.get('v'), require('./package.json').version);
       assert.equal(root.getElementById('save').disabled, false);
       assert.ok(root.getElementById('account').textContent.includes('tester@example.com'));
       assert.equal(storage.get('owa-google-bridge-v1').accounts['synthetic-account'].calendarId, 'saved-calendar');
@@ -215,5 +216,19 @@ async function test(name, callback) { await callback(); console.log('PASS ' + na
       assert.ok(!w.document.documentElement.outerHTML.includes('synthetic-isolated-token'));
     } finally { dom.window.close(); }
   });
-  console.log('\n12 OAuth checks passed');
+  await test('Authorization HTML pins asset content hashes and visible release version', async () => {
+    const version = require('./package.json').version;
+    const dom = new JSDOM(fs.readFileSync(path.join(__dirname, 'connect.html'), 'utf8'));
+    try {
+      for (const [selector, attribute, name] of [['script[src^="connect.js"]', 'src', 'connect.js'], ['link[href^="connect.css"]', 'href', 'connect.css']]) {
+        const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(__dirname, name), 'utf8').replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
+        assert.equal(dom.window.document.querySelector(selector).getAttribute(attribute), `${name}?build=${digest}`);
+      }
+      assert.equal(dom.window.document.getElementById('page-version').textContent, version);
+      const index = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+      assert.ok(index.includes(`url=INSTALL.html?v=${version}`));
+      assert.ok(index.includes(`href="INSTALL.html?v=${version}"`));
+    } finally { dom.window.close(); }
+  });
+  console.log('\n13 OAuth checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
