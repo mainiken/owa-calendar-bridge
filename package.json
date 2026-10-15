@@ -1,6 +1,6 @@
 {
   "name": "owa-calendar-bridge",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Manual OWA to Google Calendar synchronization using Tampermonkey and personal Google Apps Script.",
   "private": true,
   "license": "MIT",

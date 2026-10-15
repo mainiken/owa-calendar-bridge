@@ -120,7 +120,7 @@ Tampermonkey — расширение браузера для запуска п�
 5. Дождитесь сообщения о передаче доступа, вернитесь в OWA: в настройках появится адрес аккаунта.
 6. Выберите 30/60/90 дней и нажмите **«Сохранить»**.
 
-При `access_denied` владелец приложения должен добавить Google адрес участника в **Audience → Test users**. При `origin_mismatch` проверьте Authorized JavaScript origins: **`https://mainiken.github.io`**, без пути проекта. Если userscript не отвечает на странице входа, проверьте версию 1.3.0 и доступ Tampermonkey к `mainiken.github.io`.
+При `access_denied` владелец приложения должен добавить Google адрес участника в **Audience → Test users**. При `origin_mismatch` проверьте Authorized JavaScript origins: **`https://mainiken.github.io`**, без пути проекта. Если userscript не отвечает на странице входа, обновите его до версии 1.3.1 и разрешите Tampermonkey доступ к `mainiken.github.io`. Затем закройте старую вкладку входа, обновите OWA и начните подключение заново в том же браузере и профиле.
 
 Вход ограничен временем жизни access token. При истечении повторите подключение кнопкой; календарь и идентификаторы копий сохраняются. Refresh token и пароль Google не сохраняются.
 
@@ -235,7 +235,7 @@ https://script.google.com/macros/s/DEPLOYMENT_ID/exec#ВАШ_КЛЮЧ
 | --- | --- |
 | Google: `access_denied` | Владелец добавил ваш Google адрес в Audience → Test users; доступ разрешён при входе. |
 | Google: `origin_mismatch` | В настройках OAuth-клиента origin `https://mainiken.github.io`, без пути и завершающего `/`. |
-| Userscript не отвечает на странице входа | Версия 1.3.0, один экземпляр скрипта, разрешение Tampermonkey на mainiken.github.io. Начните вход из OWA заново. |
+| Userscript не отвечает на странице входа | Версия 1.3.1, один экземпляр скрипта, разрешение Tampermonkey на mainiken.github.io. Закройте старую вкладку входа, обновите OWA и начните подключение заново в том же браузере и профиле. |
 | Вход Google истёк | Настройки OWA → «Войти через Google» повторно. Календарь копий сохраняется. |
 | Google API: HTTP 403 | Calendar API включён, предоставлены разрешения calendar.app.created и адрес аккаунта. |
 | Нет панели | Tampermonkey включён, разрешён запуск userscript и доступ к OWA, код сохранён, вкладка обновлена. Домен в `@match` соответствует открытой почте. |

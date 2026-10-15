@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.3.0
+// @version      1.3.1
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
-// @match        https://mainiken.github.io/owa-calendar-bridge/connect.html
+// @match        https://mainiken.github.io/owa-calendar-bridge/connect.html*
 // @exclude      https://*/owa/calendar/*
 // @run-at       document-idle
+// @sandbox      DOM
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -59,19 +60,32 @@
     if (!/^[a-f0-9-]{36}$/i.test(requestId)) return;
     const key = AUTH_PREFIX + requestId;
     let completed = false;
-    window.addEventListener('message', event => {
-      if (completed || event.source !== window || event.origin !== AUTH_ORIGIN || event.data?.requestId !== requestId) return;
+    // DOM strings cross extension isolated worlds without sharing JS objects or
+    // relying on MessageEvent.source, which may be null/wrapped in extensions.
+    document.addEventListener('owa-google-oauth:request', () => {
+      const channel = document.getElementById('owa-google-auth-channel');
+      if (!channel || completed) return;
+      let data;
+      try { data = JSON.parse(channel.getAttribute('data-command') || 'null'); } catch { return; }
+      channel.removeAttribute('data-command');
+      if (!data || data.requestId !== requestId) return;
+      const reply = (type, extra = {}) => {
+        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.3.1', ...extra }));
+        channel.dispatchEvent(new Event('owa-google-oauth:response', { bubbles: true }));
+      };
       const pending = GM_getValue(key, null);
-      if (!pending || pending.status !== 'pending' || pending.expires <= Date.now()) return;
-      if (event.data.type === 'owa-google-oauth:hello') {
-        window.postMessage({ type: 'owa-google-oauth:ready', requestId }, AUTH_ORIGIN);
-      } else if (event.data.type === 'owa-google-oauth:token') {
-        const { accessToken, expiresIn, scope } = event.data;
+      if (!pending || pending.status !== 'pending' || pending.expires <= Date.now()) {
+        reply('owa-google-oauth:expired'); return;
+      }
+      if (data.type === 'owa-google-oauth:hello') {
+        reply('owa-google-oauth:ready');
+      } else if (data.type === 'owa-google-oauth:token') {
+        const { accessToken, expiresIn, scope } = data;
         if (typeof accessToken !== 'string' || accessToken.length < 10 || accessToken.length > 4096 || /\s/.test(accessToken)) return;
         if (!Number.isFinite(expiresIn) || expiresIn < 60 || expiresIn > 86400 || typeof scope !== 'string' || !scope.split(' ').includes(CALENDAR_SCOPE)) return;
         completed = true;
         GM_setValue(key, { ...pending, status: 'complete', accessToken, tokenExpires: Date.now() + expiresIn * 1000 - 30000 });
-        window.postMessage({ type: 'owa-google-oauth:saved', requestId }, AUTH_ORIGIN);
+        reply('owa-google-oauth:saved');
       }
     });
   }
