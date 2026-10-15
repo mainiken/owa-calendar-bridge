@@ -1,24 +1,36 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.2.1
+// @version      1.3.0
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
+// @match        https://mainiken.github.io/owa-calendar-bridge/connect.html
 // @exclude      https://*/owa/calendar/*
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
+// @connect      www.googleapis.com
 // ==/UserScript==
 
 (() => {
   'use strict';
   const VERSION = 1;
   const STORAGE = 'owa-google-bridge-v1';
+  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html';
+  const AUTH_ORIGIN = 'https://mainiken.github.io';
+  const AUTH_PREFIX = 'owa-google-auth:';
+  const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
+  if (location.origin === AUTH_ORIGIN && location.pathname === '/owa-calendar-bridge/connect.html') {
+    mountAuthBridge();
+    return;
+  }
   const SOURCE = location.hostname.toLowerCase();
   const DAY = 86400000;
   const TYPE = name => ({ __type: `${name}:#Exchange` });
@@ -30,12 +42,186 @@
 
   function loadConfig() {
     const saved = GM_getValue(STORAGE, null);
-    return Object.assign({ clientId: crypto.randomUUID(), connection: '', pastDays: 7, futureDays: 60, timezone: 'Europe/Moscow' }, saved || {});
+    const next = Object.assign({ clientId: crypto.randomUUID(), connection: '', pastDays: 7, futureDays: 60, timezone: 'Europe/Moscow', accounts: {} }, saved || {});
+    next.mode ||= next.connection ? 'apps-script' : 'oauth';
+    return next;
   }
 
   function saveConfig(next) {
     config = next;
     GM_setValue(STORAGE, config);
+  }
+
+  // A single userscript shares GM storage between its OWA and authorization tabs.
+  // The nonce has no account/token data. No opener relationship is required.
+  function mountAuthBridge() {
+    const requestId = location.hash.slice(1);
+    if (!/^[a-f0-9-]{36}$/i.test(requestId)) return;
+    const key = AUTH_PREFIX + requestId;
+    let completed = false;
+    window.addEventListener('message', event => {
+      if (completed || event.source !== window || event.origin !== AUTH_ORIGIN || event.data?.requestId !== requestId) return;
+      const pending = GM_getValue(key, null);
+      if (!pending || pending.status !== 'pending' || pending.expires <= Date.now()) return;
+      if (event.data.type === 'owa-google-oauth:hello') {
+        window.postMessage({ type: 'owa-google-oauth:ready', requestId }, AUTH_ORIGIN);
+      } else if (event.data.type === 'owa-google-oauth:token') {
+        const { accessToken, expiresIn, scope } = event.data;
+        if (typeof accessToken !== 'string' || accessToken.length < 10 || accessToken.length > 4096 || /\s/.test(accessToken)) return;
+        if (!Number.isFinite(expiresIn) || expiresIn < 60 || expiresIn > 86400 || typeof scope !== 'string' || !scope.split(' ').includes(CALENDAR_SCOPE)) return;
+        completed = true;
+        GM_setValue(key, { ...pending, status: 'complete', accessToken, tokenExpires: Date.now() + expiresIn * 1000 - 30000 });
+        window.postMessage({ type: 'owa-google-oauth:saved', requestId }, AUTH_ORIGIN);
+      }
+    });
+  }
+
+  function authKey() { return AUTH_PREFIX + SOURCE; }
+
+  function currentAuth() {
+    const auth = GM_getValue(authKey(), null);
+    if (!auth?.accessToken || auth.expires <= Date.now()) {
+      if (auth) GM_deleteValue(authKey());
+      throw new Error('Нужно обновить вход Google. Нажми «Войти через Google» в настройках и затем повтори синхронизацию.');
+    }
+    return auth;
+  }
+
+  async function connectGoogle() {
+    if (busy) return;
+    const requestId = crypto.randomUUID(), key = AUTH_PREFIX + requestId;
+    GM_setValue(key, { status: 'pending', expires: Date.now() + 5 * 60000 });
+    setBusy(true);
+    ui.dialogError.textContent = 'В новой вкладке нажми «Войти через Google», выбери аккаунт и разреши доступ.';
+    try {
+      // Open synchronously from the user gesture, before any await.
+      const authTab = GM_openInTab(`${AUTH_PAGE}#${requestId}`, { active: true, insert: true });
+      let result;
+      for (let i = 0; i < 600; i++) {
+        await sleep(500);
+        result = GM_getValue(key, null);
+        if (result?.status === 'complete') break;
+        if (authTab?.closed) throw new Error('Вкладка входа закрыта. Нажми «Войти через Google», чтобы повторить.');
+      }
+      if (result?.status !== 'complete' || result.tokenExpires <= Date.now()) throw new Error('Вход не завершён за 5 минут. Нажми «Войти через Google», чтобы повторить.');
+      const credential = { accessToken: result.accessToken, expires: result.tokenExpires };
+      const account = await googleApi('/oauth2/v3/userinfo', { credential });
+      if (typeof account.sub !== 'string' || !account.sub || typeof account.email !== 'string') throw new Error('Google не вернул аккаунт. Разреши доступ к адресу почты при входе.');
+      credential.account = account.sub;
+      credential.email = account.email;
+      GM_setValue(authKey(), credential);
+      saveConfig({ ...config, mode: 'oauth' });
+      ui.mode.value = 'oauth';
+      ui.dialogError.textContent = '';
+      updateAccountLabel();
+      status('Google подключён. Нажми «Синхронизировать».');
+    } catch (error) { ui.dialogError.textContent = error.message; }
+    finally { GM_deleteValue(key); setBusy(false); }
+  }
+
+  // No cookies, corporate identifiers, or Apps Script key are sent to this API.
+  function googleApi(path, { method = 'GET', body, credential = currentAuth(), allowed = [] } = {}) {
+    if (!path.startsWith('/calendar/v3/') && path !== '/oauth2/v3/userinfo') throw new Error('Недопустимый путь Google API.');
+    return new Promise((resolve, reject) => GM_xmlhttpRequest({
+      method, url: 'https://www.googleapis.com' + path, anonymous: true, timeout: 45000,
+      headers: { Authorization: `Bearer ${credential.accessToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { data: JSON.stringify(body) } : {}),
+      onload(response) {
+        const code = Number(response.status);
+        if (allowed.includes(code)) { resolve({ httpStatus: code }); return; }
+        if (code === 401) { GM_deleteValue(authKey()); reject(new Error('Вход Google истёк или отозван. Подключи Google повторно в настройках.')); return; }
+        if (code < 200 || code >= 300) {
+          let reason = '';
+          try { reason = JSON.parse(response.responseText)?.error?.errors?.[0]?.reason || ''; } catch {}
+          const detail = code === 403 ? 'Проверь разрешение calendar.app.created, включение Calendar API и доступ тестового аккаунта в Google Cloud.' : code === 404 ? 'Календарь копий не найден. Проверь выбранный аккаунт; календарь мог быть удалён.' : code === 429 ? 'Превышена частота запросов. Повтори позже.' : 'Повтори запуск; уже созданные копии будут найдены по идентификаторам.';
+          reject(new Error(`Google API: HTTP ${code}${/^[a-zA-Z]{1,60}$/.test(reason) ? ` (${reason})` : ''}. ${detail}`)); return;
+        }
+        try { resolve(response.responseText ? JSON.parse(response.responseText) : {}); }
+        catch { reject(new Error('Google API вернул непонятный ответ. Синхронизация остановлена.')); }
+      },
+      onerror() { reject(new Error('Нет соединения с Google API. Проверь интернет и разрешение Tampermonkey на www.googleapis.com.')); },
+      ontimeout() { reject(new Error('Google API не ответил. Повтори запуск: копии будут восстановлены по идентификаторам.')); }
+    }));
+  }
+
+  async function calendarForAccount(auth) {
+    let id = config.accounts?.[auth.account]?.calendarId;
+    if (id) return id;
+    const calendar = await googleApi('/calendar/v3/calendars', { method: 'POST', credential: auth,
+      body: { summary: 'Работа · OWA', description: 'Копии встреч OWA. Обновляются вручную.', timeZone: config.timezone } });
+    if (typeof calendar.id !== 'string' || !calendar.id) throw new Error('Google не вернул идентификатор календаря.');
+    id = calendar.id;
+    saveConfig({ ...config, accounts: { ...config.accounts, [auth.account]: { calendarId: id } } });
+    return id;
+  }
+
+  function oauthOwned(event, owner) {
+    const props = event.extendedProperties?.private;
+    return props?.bridge === 'owa-google-oauth-v1' && props.owner === owner && /^[a-f0-9]{64}$/.test(props.key || '') && !event.recurrence?.length && !event.recurringEventId;
+  }
+
+  async function syncOAuth(snapshot, auth) {
+    const id = await calendarForAccount(auth), base = `/calendar/v3/calendars/${encodeURIComponent(id)}/events`;
+    const owner = await hash(`${config.clientId}\0${SOURCE}`);
+    const query = new URLSearchParams({ timeMin: snapshot.windowStart, timeMax: snapshot.windowEnd, maxResults: '2500',
+      singleEvents: 'true', privateExtendedProperty: `owner=${owner}` });
+    const existing = new Map(), pages = new Set();
+    let pageToken = '';
+    do {
+      if (pageToken) query.set('pageToken', pageToken);
+      const page = await googleApi(`${base}?${query}`, { credential: auth });
+      if (!Array.isArray(page.items)) throw new Error('Google не вернул полный список копий. Синхронизация остановлена.');
+      for (const event of page.items) {
+        if (!oauthOwned(event, owner) || !event.id) throw new Error('Конфликт принадлежности копии встречи. Синхронизация остановлена.');
+        const key = event.extendedProperties.private.key;
+        if (existing.has(key)) throw new Error('Найдены дубли управляемой встречи. Синхронизация остановлена.');
+        existing.set(key, event);
+      }
+      pageToken = page.nextPageToken || '';
+      if (pageToken && (pages.has(pageToken) || pages.size >= 20)) throw new Error('Google не подтвердил окончание списка копий.');
+      pages.add(pageToken);
+    } while (pageToken);
+    const totals = { created: 0, updated: 0, unchanged: 0, deleted: 0 };
+    const keys = new Set();
+    for (const [index, item] of snapshot.events.entries()) {
+      keys.add(item.key);
+      status(`Отправляю в Google: ${index} / ${snapshot.events.length}`);
+      const digest = await hash(JSON.stringify(item));
+      const eventId = 'b' + await hash(`${owner}\0${item.key}`);
+      let event = existing.get(item.key);
+      // Deterministic IDs recover moved events outside the window and unknown POST outcomes.
+      if (!event) {
+        const recovered = await googleApi(`${base}/${eventId}`, { credential: auth, allowed: [404] });
+        if (recovered.httpStatus !== 404) {
+          if (!oauthOwned(recovered, owner) || recovered.extendedProperties.private.key !== item.key) throw new Error('Конфликт идентификатора копии встречи.');
+          event = recovered;
+        }
+      }
+      if (event && event.extendedProperties.private.digest === digest) { totals.unchanged++; continue; }
+      const body = { summary: item.title, description: item.description, location: item.location,
+        start: item.allDay ? { date: item.startDate } : { dateTime: item.start },
+        end: item.allDay ? { date: item.endDate } : { dateTime: item.end },
+        extendedProperties: { private: { bridge: 'owa-google-oauth-v1', owner, key: item.key, digest } } };
+      if (event) {
+        await googleApi(`${base}/${encodeURIComponent(event.id)}?sendUpdates=none`, { method: 'PUT', credential: auth, body }); totals.updated++;
+      } else {
+        const result = await googleApi(`${base}?sendUpdates=none`, { method: 'POST', credential: auth, body: { ...body, id: eventId }, allowed: [409] });
+        if (result.httpStatus === 409) throw new Error('Копия уже создана другим запуском. Повтори синхронизацию; очистка не выполнялась.');
+        totals.created++;
+      }
+    }
+    // All writes and the complete Google listing must succeed before any deletion.
+    const removals = [];
+    if (snapshot.complete) for (const [key, event] of existing) {
+      const start = event.start?.dateTime || (event.start?.date ? `${event.start.date}T00:00:00+03:00` : '');
+      if (!Number.isFinite(Date.parse(start))) throw new Error('Копия без корректного времени. Очистка остановлена.');
+      if (keys.has(key) || Date.parse(start) < Date.parse(snapshot.windowStart) || Date.parse(start) >= Date.parse(snapshot.windowEnd)) continue;
+      removals.push(event);
+    }
+    for (const event of removals) {
+      await googleApi(`${base}/${encodeURIComponent(event.id)}?sendUpdates=none`, { method: 'DELETE', credential: auth, allowed: [404, 410] }); totals.deleted++;
+    }
+    return totals;
   }
 
   function connection(value) {
@@ -295,28 +481,31 @@
 
   function setBusy(value) {
     busy = value;
-    for (const button of [ui.sync, ui.preview, ui.exportButton, ui.settings]) button.disabled = value;
+    for (const button of [ui.sync, ui.preview, ui.exportButton, ui.settings, ui.oauthLogin, ui.oauthDisconnect, ui.save, ui.cancel, ui.mode]) button.disabled = value;
     ui.sync.textContent = value ? 'Синхронизация…' : 'Синхронизировать';
   }
 
   async function sync() {
     if (busy) return;
-    if (!config.connection) { settings(); return; }
+    if (config.mode === 'apps-script' && !config.connection) { settings(); return; }
+    if (config.mode === 'oauth') {
+      try { currentAuth(); } catch { settings(); ui.dialogError.textContent = 'Нажми «Войти через Google», чтобы подключить календарь.'; return; }
+    }
     setBusy(true);
     try {
-      connection(config.connection);
       status('Проверяю подключение Google…');
-      await google({ op: 'ping', version: VERSION });
+      const auth = config.mode === 'oauth' ? currentAuth() : null;
+      if (!auth) { connection(config.connection); await google({ op: 'ping', version: VERSION }); }
       const snapshot = await collect();
       lastSnapshot = snapshot;
       const { events, ...metadata } = snapshot;
-      const totals = { created: 0, updated: 0, unchanged: 0, deleted: 0 };
-      for (let offset = 0; offset < events.length; offset += 15) {
+      const totals = auth ? await syncOAuth(snapshot, auth) : { created: 0, updated: 0, unchanged: 0, deleted: 0 };
+      if (!auth) for (let offset = 0; offset < events.length; offset += 15) {
         status(`Отправляю в Google: ${offset} / ${events.length}`);
         const result = await google({ ...metadata, op: 'upsert', events: events.slice(offset, offset + 15) });
         for (const name of ['created', 'updated', 'unchanged']) totals[name] += result[name] || 0;
       }
-      if (snapshot.complete) {
+      if (!auth && snapshot.complete) {
         status('Проверяю отмены и переносы…');
         const result = await google({ ...metadata, op: 'finalize', keys: events.map(event => event.key) });
         totals.deleted = result.deleted || 0;
@@ -385,7 +574,21 @@
     ui.dialog.showModal();
     ui.connection.value = config.connection;
     ui.future.value = String(config.futureDays);
+    ui.mode.value = config.mode;
+    updateAccountLabel();
+    updateModeDisplay();
     ui.dialogError.textContent = '';
+  }
+
+  function updateAccountLabel() {
+    const auth = GM_getValue(authKey(), null);
+    ui.account.textContent = auth?.email ? `${auth.email}${auth.expires <= Date.now() ? ' — нужно войти повторно' : ' — подключён'}` : 'Google пока не подключён.';
+    ui.oauthDisconnect.hidden = !auth;
+  }
+
+  function updateModeDisplay() {
+    ui.oauthSettings.hidden = ui.mode.value !== 'oauth';
+    ui.scriptSettings.hidden = ui.mode.value !== 'apps-script';
   }
 
   function mount() {
@@ -405,24 +608,39 @@
     </style><div class="card"><div class="top"><strong>Работа → Google Календарь</strong><span><button class="icon" id="settings" title="Настройки">⚙</button><button class="icon" id="collapse" title="Свернуть">−</button></span></div>
       <div id="content"><button class="primary" id="sync">Синхронизировать</button><div class="tools"><button id="preview">Просмотр</button><button id="export">Скачать ICS</button></div>
       <div class="status" id="status">VPN включён, OWA открыт — можно запускать.</div><div class="list" id="list" hidden></div></div></div>
-      <dialog id="dialog"><h2>Подключить Google</h2><p>Один раз установи обработчик в своём Google Apps Script. Он создаст отдельный календарь «Работа».</p>
-      <p class="muted">Код и пошаговая установка — в файлах GoogleCalendarBridge.gs и INSTALL.html, которые идут вместе с этим скриптом.</p>
+      <dialog id="dialog"><h2>Подключить Google</h2>
+      <label>Способ подключения<select id="mode"><option value="oauth">Войти через Google</option><option value="apps-script">Мой Google Apps Script</option></select></label>
+      <div id="oauth-settings"><p>Войди в свой Google аккаунт и разреши создание календаря копий «Работа · OWA».</p>
+      <button id="oauth-login" class="primary">Войти через Google</button><p id="account" class="muted"></p><button id="oauth-disconnect">Отключить на этом устройстве</button>
+      <p class="muted">Вход действует ограниченное время. При истечении нажми эту кнопку снова. Существующие копии сохранятся.</p></div>
+      <div id="script-settings"><p>Собственный обработчик Apps Script создаёт отдельный календарь «Работа».</p>
+      <p class="muted"><a href="https://mainiken.github.io/owa-calendar-bridge/INSTALL.html#apps-script" target="_blank" rel="noopener noreferrer">Инструкция для Apps Script</a></p>
       <label>Ссылка подключения<input id="connection" type="password" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec#ключ"></label>
+      </div>
       <label>На сколько дней вперёд<select id="future"><option value="30">30 дней</option><option value="60">60 дней</option><option value="90">90 дней</option></select></label>
       <p class="muted">Также обновляются последние 7 дней. В Google переносятся название, время, место, описание и ссылки на звонок.</p><p class="error" id="error"></p>
       <div class="actions"><button id="cancel">Закрыть</button><button id="save">Сохранить</button></div></dialog>`;
     const get = id => root.getElementById(id);
     ui = { sync: get('sync'), preview: get('preview'), exportButton: get('export'), settings: get('settings'), status: get('status'), list: get('list'),
-      dialog: get('dialog'), connection: get('connection'), future: get('future'), dialogError: get('error') };
+      dialog: get('dialog'), connection: get('connection'), future: get('future'), dialogError: get('error'), mode: get('mode'),
+      oauthLogin: get('oauth-login'), oauthDisconnect: get('oauth-disconnect'), account: get('account'),
+      oauthSettings: get('oauth-settings'), scriptSettings: get('script-settings'), save: get('save'), cancel: get('cancel') };
     ui.sync.addEventListener('click', sync); ui.preview.addEventListener('click', preview); ui.exportButton.addEventListener('click', exportIcs);
     ui.settings.addEventListener('click', settings);
+    ui.mode.addEventListener('change', updateModeDisplay);
+    ui.oauthLogin.addEventListener('click', connectGoogle);
+    ui.oauthDisconnect.addEventListener('click', () => {
+      GM_deleteValue(authKey()); updateAccountLabel();
+      ui.dialogError.textContent = 'Вход удалён с этого устройства. Для отзыва разрешения приложению используй myaccount.google.com/connections. Копии встреч сохранены.';
+    });
+    ui.dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
     get('collapse').addEventListener('click', () => { get('content').hidden = !get('content').hidden; get('collapse').textContent = get('content').hidden ? '+' : '−'; });
     get('cancel').addEventListener('click', () => ui.dialog.close());
     get('save').addEventListener('click', () => {
       try {
         if (ui.connection.value.trim()) connection(ui.connection.value);
-        saveConfig({ ...config, connection: ui.connection.value.trim(), futureDays: Number(ui.future.value) });
-        ui.dialog.close(); status(config.connection ? 'Google подключён. Нажми «Синхронизировать».' : 'Можно посмотреть встречи или скачать ICS.');
+        saveConfig({ ...config, mode: ui.mode.value, connection: ui.connection.value.trim(), futureDays: Number(ui.future.value) });
+        ui.dialog.close(); status('Настройки сохранены. Можно запускать синхронизацию.');
       } catch (error) { ui.dialogError.textContent = error.message; }
     });
     document.body.append(host);
@@ -430,7 +648,7 @@
 
   // The test harness exposes internals only when evaluating this source in an isolated VM.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse };
+    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse, googleApi, syncOAuth, currentAuth, oauthOwned };
   } else {
     GM_setValue(STORAGE, config);
     mount();

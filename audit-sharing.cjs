@@ -10,11 +10,12 @@ const REPOSITORY_FILES = [...RELEASE_FILES,
   '.gitignore', '.gitattributes', '.github/workflows/checks.yml',
   'package.json', 'package-lock.json', 'build-install.cjs', 'installer.template.html',
   'tests.cjs', 'ui-tests.cjs', 'audit-sharing.cjs', 'index.html', '.nojekyll',
-  'docs/GOOGLE-OAUTH.md'
+  'docs/GOOGLE-OAUTH.md', 'connect.html', 'connect.js', 'connect.css', 'privacy.html', 'oauth-tests.cjs'
 ];
 
 // Patterns identify accidental personal connections, never print matched values.
 const PATTERNS = [
+  ['Google OAuth client secret', /GOCSPX-[A-Za-z0-9_-]{20,}/],
   ['personal Google deployment URL', /https?:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{40,}\/(?:exec|dev)/i],
   ['connection link containing a literal key', /\/(?:exec|dev)#[a-f0-9]{32,}/i],
   ['published calendar bearer URL', /\/owa\/calendar\/[^\s"'<>]+\/[a-f0-9]{24,}\/calendar\.(?:ics|html)/i],

@@ -8,6 +8,7 @@ screenshots/
 .env.*
 .clasp.json
 .clasprc.json
+client_secret_*.json
 connectOwa.gs
 diagnose-owa.js
 HOWTO.txt

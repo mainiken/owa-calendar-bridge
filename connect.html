@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; frame-src https://accounts.google.com; connect-src 'self' https://accounts.google.com https://www.googleapis.com; style-src 'self' https://accounts.google.com; img-src 'self' data: https://*.googleusercontent.com https://www.gstatic.com; base-uri 'none'; object-src 'none'; form-action 'none'">
+  <title>Подключить Google · OWA Calendar Bridge</title>
+  <link rel="stylesheet" href="connect.css">
+  <script src="connect.js" defer></script>
+  <script src="https://accounts.google.com/gsi/client" defer></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">OWA CALENDAR BRIDGE</p>
+    <h1>Подключить Google Календарь</h1>
+    <p>Выберите аккаунт, в котором нужны копии рабочих встреч. Приложение запросит доступ к календарям, которые само создаёт, и адресу вашего Google аккаунта.</p>
+    <button id="login" disabled>Войти через Google</button>
+    <p id="status" role="status">Проверяю установленный userscript…</p>
+    <p class="small">После подключения вернитесь в OWA и нажмите «Синхронизировать». Вход ограничен по времени: при истечении его можно повторить той же кнопкой. Пароль вводится только на странице Google.</p>
+    <p class="small"><a href="privacy.html">Данные и разрешения</a> · <a href="INSTALL.html">Установка</a> · <a href="https://github.com/mainiken/owa-calendar-bridge">Исходный код</a></p>
+  </main>
+</body>
+</html>

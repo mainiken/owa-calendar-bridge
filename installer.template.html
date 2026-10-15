@@ -23,11 +23,12 @@
 </head>
 <body>
 <main>
-  <div class="eyebrow">OWA → GOOGLE КАЛЕНДАРЬ · 1.2.1</div>
+  <div class="eyebrow">OWA → GOOGLE КАЛЕНДАРЬ · 1.3.0</div>
   <h1>Рабочие встречи рядом с личными</h1>
   <p class="intro">Установите кнопку один раз. Дальше: рабочий VPN включён, OWA открыт — нажмите «Синхронизировать».</p>
   <p class="small">Эта страница работает прямо в браузере — скачивать проект или архив не требуется. <a href="https://github.com/mainiken/owa-calendar-bridge" target="_blank" rel="noopener noreferrer">Исходники на GitHub</a> · <a href="https://github.com/mainiken/owa-calendar-bridge/blob/main/docs/GOOGLE-OAUTH.md" target="_blank" rel="noopener noreferrer">Подготовка входа через Google</a></p>
-  <div class="note">Каждый пользователь создаёт собственный обработчик Google и ключ. Для установки не нужны терминал, Node.js или консоль браузера. Ссылка с ключом остаётся только у вас.</div>
+  <div class="note">Установите userscript и войдите через Google кнопкой в OWA. Создавать свой Apps Script и копировать ключи больше не нужно. Для первого теста владелец OAuth-приложения должен добавить ваш Google адрес в список Test users.</div>
+  <p class="small"><b>MacBook:</b> используйте Chrome или Firefox с Tampermonkey. В сочетаниях ниже вместо Ctrl используйте ⌘: ⌘A, ⌘V, ⌘S; обновление вкладки — ⌘R. Реальный вход и синхронизация на macOS пока ожидают проверки.</p>
 
   <section class="step">
     <div class="number">ШАГ 1 · БРАУЗЕР</div>
@@ -70,7 +71,8 @@
     </ol>
     <button data-copy="userscript">Скопировать userscript</button>
     <button class="secondary" data-download="userscript">Скачать .user.js</button>
-    <p class="small">При повторной установке обновляйте существующий скрипт, сохраняя его настройки.</p>
+    <a class="button secondary" href="https://raw.githubusercontent.com/mainiken/owa-calendar-bridge/main/owa-google-sync.user.js" target="_blank" rel="noopener noreferrer">Установить общий userscript по ссылке</a>
+    <p class="small">Прямая установка использует общий шаблон для сайтов /owa/. Копирование выше ограничивает OWA вашим сервером. В обоих случаях нужен также доступ Tampermonkey к странице подключения на mainiken.github.io. При обновлении заменяйте существующий скрипт, сохраняя настройки.</p>
     <details><summary>Посмотреть код для моего сервера</summary><textarea id="userscript" readonly spellcheck="false" aria-label="Код userscript"></textarea></details>
   </section>
 
@@ -82,7 +84,33 @@
   </section>
 
   <section class="step">
-    <div class="number">ШАГ 5 · ВАШ GOOGLE АККАУНТ</div>
+    <div class="number">ШАГ 5 · ВХОД GOOGLE</div>
+    <h2>Подключите свой Google аккаунт</h2>
+    <ol>
+      <li>В панели OWA нажмите <b>⚙</b>. Способ подключения — <b>«Войти через Google»</b>.</li>
+      <li>Нажмите синюю кнопку <b>«Войти через Google»</b>. Откроется новая вкладка этого сайта.</li>
+      <li>Если Tampermonkey запросит доступ к <code>mainiken.github.io</code>, разрешите его.</li>
+      <li>На новой странице нажмите <b>«Войти через Google»</b>, выберите нужный аккаунт и разрешите работу с календарями приложения и адресом аккаунта.</li>
+      <li>После сообщения об успешной передаче доступа вернитесь в OWA. В настройках появится адрес подключённого аккаунта.</li>
+      <li>Выберите 30, 60 или 90 дней вперёд и нажмите <b>«Сохранить»</b>.</li>
+    </ol>
+    <p class="small">Если Google показывает <code>access_denied</code>, проверьте у владельца приложения добавление вашего адреса в <b>Google Auth Platform → Audience → Test users</b>. При истечении входа повторите этот шаг: календарь останется тем же. Пароль и Client secret сюда вводить не нужно.</p>
+  </section>
+  <section class="step">
+    <div class="number">ШАГ 6 · ПЕРВАЯ СИНХРОНИЗАЦИЯ</div>
+    <h2>Синхронизируйте встречи</h2>
+    <ol>
+      <li>В панели OWA нажмите <b>«Синхронизировать»</b>.</li>
+      <li>Разрешите запросы userscript к <code>www.googleapis.com</code>, если Tampermonkey спросит.</li>
+      <li>Дождитесь сообщения <b>«Готово»</b> со счётчиками.</li>
+      <li>В <a href="https://calendar.google.com/" target="_blank" rel="noopener noreferrer">Google Календаре</a> найдите календарь <b>«Работа · OWA»</b>, включите его отображение и проверьте время и описание встречи.</li>
+    </ol>
+    <p class="small">Прежний Apps Script использует календарь «Работа». OAuth создаёт отдельный «Работа · OWA» и старые копии не переносит: при переключении скройте старый календарь, чтобы не видеть оба набора одновременно.</p>
+  </section>
+  <details id="apps-script"><summary>Дополнительный способ: собственный Google Apps Script</summary>
+  <p>Для этого способа в настройках OWA выберите <b>«Мой Google Apps Script»</b>. У каждого пользователя должен быть свой обработчик и ключ. Можно продолжать использовать существующее подключение.</p>
+  <section class="step">
+    <div class="number">APPS SCRIPT · 1 · ВАШ GOOGLE АККАУНТ</div>
     <h2>Создайте собственный обработчик</h2>
     <ol>
       <li>Откройте Apps Script по кнопке ниже. По аватару справа сверху проверьте нужный Google аккаунт.</li>
@@ -96,7 +124,7 @@
   </section>
 
   <section class="step">
-    <div class="number">ШАГ 6 · РАЗВЕРТЫВАНИЕ GOOGLE</div>
+    <div class="number">APPS SCRIPT · 2 · РАЗВЕРТЫВАНИЕ GOOGLE</div>
     <h2>Разверните веб-приложение</h2>
     <ol>
       <li>Справа сверху: <b>«Начать развертывание / Deploy» → «Новое развертывание»</b>.</li>
@@ -110,7 +138,7 @@
   </section>
 
   <section class="step">
-    <div class="number">ШАГ 7 · КЛЮЧ ПОДКЛЮЧЕНИЯ</div>
+    <div class="number">APPS SCRIPT · 3 · КЛЮЧ ПОДКЛЮЧЕНИЯ</div>
     <h2>Запустите setup</h2>
     <ol>
       <li>Вернитесь в редактор Apps Script. В списке функций рядом с «Выполнить» и «Отладка» выберите <code>setup</code>.</li>
@@ -123,7 +151,7 @@
   </section>
 
   <section class="step">
-    <div class="number">ШАГ 8 · ПЕРВАЯ СИНХРОНИЗАЦИЯ</div>
+    <div class="number">APPS SCRIPT · 4 · ПЕРВАЯ СИНХРОНИЗАЦИЯ</div>
     <h2>Подключите Google в OWA</h2>
     <ol>
       <li>На панели в OWA нажмите <b>⚙</b>.</li>
@@ -136,7 +164,8 @@
     <p><span class="pill">Теперь — одна кнопка, когда OWA доступен</span></p>
   </section>
 
-  <details><summary>Google требует входа или ссылка не подходит</summary>
+  </details>
+  <details><summary>Apps Script: Google требует входа или ссылка не подходит</summary>
     <p>Нужна ссылка <code>/exec#ключ</code>. Адрес из окна развертывания сам по себе ключа не содержит.</p>
     <p>Если Google требует входа: <b>Управление развертываниями → своё веб-приложение → карандаш</b>. Выполнять от имени: <b>Я</b>. Доступ: <b>Все, включая пользователей без входа</b>. Сохраните настройки существующего развертывания.</p>
     <p>Контроль: свой адрес <code>/exec</code> без ключа в окне инкогнито должен показывать JSON с <code>OWA Calendar Bridge</code>, без запроса входа.</p>
@@ -146,7 +175,7 @@
     <p>Отсутствующие встречи удаляются после полного успешного чтения OWA и успешной отправки копий. Если список неполный или возникла ошибка, очистка не запускается.</p>
   </details>
   <details><summary>Передать коллеге или обновить скрипт</summary>
-    <p>Передавайте <a href="https://mainiken.github.io/owa-calendar-bridge/">ссылку на эту страницу</a> или на репозиторий. В текущей версии каждый коллега создаёт свой обработчик и ключ. Личные ссылки <code>/exec#ключ</code>, cookie и экспорты реальных встреч не передавайте.</p>
+    <p>Передавайте <a href="https://mainiken.github.io/owa-calendar-bridge/">ссылку на эту страницу</a> или на репозиторий. Каждый коллега входит в собственный Google аккаунт. Личные токены, ссылки <code>/exec#ключ</code>, cookie и экспорты реальных встреч не передавайте.</p>
     <p>При обновлении замените существующий userscript в Tampermonkey. Для Google сохраните новый код и обновите существующее развертывание до новой версии.</p>
   </details>
   <footer>
