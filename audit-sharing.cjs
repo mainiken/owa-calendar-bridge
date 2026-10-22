@@ -10,7 +10,8 @@ const REPOSITORY_FILES = [...RELEASE_FILES,
   '.gitignore', '.gitattributes', '.github/workflows/checks.yml',
   'package.json', 'package-lock.json', 'build-install.cjs', 'installer.template.html',
   'tests.cjs', 'ui-tests.cjs', 'audit-sharing.cjs', 'index.html', '.nojekyll',
-  'docs/GOOGLE-OAUTH.md', 'connect.html', 'connect.js', 'connect.css', 'privacy.html', 'oauth-tests.cjs'
+  'docs/GOOGLE-OAUTH.md', 'connect.html', 'connect.js', 'connect.css', 'privacy.html', 'oauth-tests.cjs',
+  'auth-server.cjs', 'auth-server-tests.cjs', 'Dockerfile.auth', 'compose.auth.yml', '.dockerignore', 'docs/AUTH-SERVICE.md'
 ];
 
 // Patterns identify accidental personal connections, never print matched values.

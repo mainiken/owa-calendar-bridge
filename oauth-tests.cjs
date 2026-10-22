@@ -174,17 +174,18 @@ function sourceFixture() {
       const w = dom.window, messages = []; let settings, requested;
       const channel = w.document.getElementById('owa-google-auth-channel');
       w.document.addEventListener('owa-google-oauth:request', () => { messages.push(JSON.parse(channel.getAttribute('data-command'))); });
-      w.google = { accounts: { oauth2: { initTokenClient(options) { settings = options; return { requestAccessToken(options) { requested = options; } }; }, hasGrantedAllScopes: () => true } } };
+      w.google = { accounts: { oauth2: { initCodeClient(options) { settings = options; return { requestCode() { requested = true; } }; } } } };
       w.eval(fs.readFileSync(path.join(__dirname, 'connect.js'), 'utf8'));
-      const send = type => { channel.setAttribute('data-response', JSON.stringify({ type, requestId })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
+      const send = type => { channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.0' })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
       assert.equal(w.document.getElementById('login').disabled, true); send('owa-google-oauth:ready');
       w.document.getElementById('login').click();
       assert.ok(settings.scope.includes(scope)); assert.ok(settings.scope.includes(emailScope)); assert.ok(!settings.scope.includes('auth/calendar ')); assert.equal(settings.client_secret, undefined);
-      assert.equal(requested.prompt, 'select_account');
-      settings.callback({ access_token: 'synthetic-token-response', expires_in: 3600, scope });
-      const delivered = messages.find(item => item.type === 'owa-google-oauth:token');
+      assert.equal(requested, true); assert.equal(settings.ux_mode, 'popup');
+      settings.callback({ code: 'synthetic-auth-code', scope });
+      const delivered = messages.find(item => item.type === 'owa-google-oauth:code');
+      assert.equal(delivered.code, 'synthetic-auth-code'); assert.equal(delivered.accessToken, undefined);
       assert.equal(delivered.requestId, requestId); assert.equal(channel.hasAttribute('data-command'), false);
-      assert.ok(!w.location.href.includes('synthetic-token')); send('owa-google-oauth:saved');
+      assert.ok(!w.location.href.includes('synthetic-auth-code')); send('owa-google-oauth:saved');
       assert.equal(w.location.hash, ''); assert.equal(w.document.getElementById('login').disabled, true);
       assert.equal(w.document.getElementById('success-panel').hidden, true, 'Token storage is not yet successful account confirmation');
       channel.setAttribute('data-response', JSON.stringify({ type: 'owa-google-oauth:connected', requestId, email: 'tester@example.com' }));
@@ -208,10 +209,18 @@ function sourceFixture() {
       w.GM_openInTab = (url, options) => {
         opened = { url, options }; const id = new URL(url).hash.slice(1), key = 'owa-google-auth:' + id;
         assert.equal(storage.get(key).status, 'pending');
-        storage.set(key, { ...storage.get(key), status: 'complete', accessToken: 'synthetic-tab-access', tokenExpires: Date.now() + 600000 });
+        storage.set(key, { ...storage.get(key), status: 'complete', code: 'synthetic-tab-auth-code' });
         return { closed: false, close() { closes++; assert.equal(storage.get('owa-google-auth:owa.example.com').account, 'synthetic-account'); } };
       };
       w.GM_xmlhttpRequest = options => {
+        if (options.url === 'https://eovdienko.ru/owa-calendar-auth/exchange') {
+          assert.equal(JSON.parse(options.data).code, 'synthetic-tab-auth-code');
+          queueMicrotask(() => options.onload({ status: 200, responseText: JSON.stringify({ accessToken: 'synthetic-tab-access', sessionToken: 's'.repeat(43), expires: Date.now() + 600000 }) })); return;
+        }
+        if (options.url === 'https://eovdienko.ru/owa-calendar-auth/disconnect') {
+          assert.equal(options.headers.Authorization, 'Bearer ' + 's'.repeat(43));
+          queueMicrotask(() => options.onload({ status: 200, responseText: '{}' })); return;
+        }
         assert.equal(options.url, 'https://www.googleapis.com/oauth2/v3/userinfo');
         queueMicrotask(() => options.onload({ status: 200, responseText: JSON.stringify({ sub: 'synthetic-account', email: 'tester@example.com' }) }));
       };
@@ -227,12 +236,16 @@ function sourceFixture() {
       assert.equal(new URL(opened.url).searchParams.get('v'), require('./package.json').version);
       assert.equal(root.getElementById('save').disabled, false);
       assert.ok(root.getElementById('account').textContent.includes('tester@example.com'));
+      assert.ok(root.getElementById('account').textContent.includes('автоматически'));
+      assert.equal(storage.get('owa-google-auth:owa.example.com').sessionToken, 's'.repeat(43));
       assert.equal(storage.get('owa-google-bridge-v1').accounts['synthetic-account'].calendarId, 'saved-calendar');
       const receipt = storage.get('owa-google-auth:' + new URL(opened.url).hash.slice(1));
       assert.equal(receipt.status, 'connected'); assert.equal(receipt.accessToken, undefined);
       assert.equal(root.getElementById('dialog').hasAttribute('open'), false);
       assert.equal(closes, 0); closeAction(); assert.equal(closes, 1);
-      root.getElementById('oauth-disconnect').click(); assert.equal(storage.has('owa-google-auth:owa.example.com'), false);
+      root.getElementById('oauth-disconnect').click();
+      for (let i = 0; i < 100 && storage.has('owa-google-auth:owa.example.com'); i++) await pause();
+      assert.equal(storage.has('owa-google-auth:owa.example.com'), false);
       assert.equal(storage.get('owa-google-bridge-v1').accounts['synthetic-account'].calendarId, 'saved-calendar');
     } finally { dom.window.close(); }
   });
@@ -242,7 +255,7 @@ function sourceFixture() {
     const dom = new JSDOM(fs.readFileSync(path.join(__dirname, 'connect.html'), 'utf8'), { url: `https://mainiken.github.io/owa-calendar-bridge/connect.html#${requestId}`, runScripts: 'outside-only' });
     try {
       const w = dom.window; let tokenOptions;
-      w.google = { accounts: { oauth2: { initTokenClient(options) { tokenOptions = options; return { requestAccessToken() { options.callback({ access_token: 'synthetic-isolated-token', expires_in: 3600, scope: `${scope} ${emailScope}` }); } }; }, hasGrantedAllScopes: () => true } } };
+      w.google = { accounts: { oauth2: { initCodeClient(options) { tokenOptions = options; return { requestCode() { options.callback({ code: 'synthetic-isolated-code', scope: `${scope} ${emailScope}` }); } }; } } } };
       w.postMessage = () => { throw new Error('Window message channel must not be used'); };
       // Distinct JS globals and window identity, exactly one shared browser DOM.
       const isolated = { location: w.location, document: w.document, Event: w.Event, window: {},
@@ -253,14 +266,14 @@ function sourceFixture() {
       for (let i = 0; i < 100 && button.disabled; i++) await pause();
       assert.equal(button.disabled, false, w.document.getElementById('status').textContent);
       button.click(); assert.ok(tokenOptions);
-      assert.equal(storage.get(key).status, 'complete'); assert.equal(storage.get(key).accessToken, 'synthetic-isolated-token');
+      assert.equal(storage.get(key).status, 'complete'); assert.equal(storage.get(key).code, 'synthetic-isolated-code');
       assert.equal(w.location.hash, ''); assert.equal(w.document.getElementById('success-panel').hidden, true);
       storage.set(key, { status: 'connected', email: 'tester@example.com', expires: Date.now() + 10000 });
       for (let i = 0; i < 100 && w.document.getElementById('success-panel').hidden; i++) await pause();
       assert.equal(w.document.getElementById('success-panel').hidden, false);
       const channel = w.document.getElementById('owa-google-auth-channel');
       assert.equal(channel.hasAttribute('data-command'), false); assert.equal(channel.hasAttribute('data-response'), false);
-      assert.ok(!w.document.documentElement.outerHTML.includes('synthetic-isolated-token'));
+      assert.ok(!w.document.documentElement.outerHTML.includes('synthetic-isolated-code'));
     } finally { dom.window.close(); }
   });
   await test('Authorization HTML pins asset content hashes and visible release version', async () => {
@@ -327,11 +340,11 @@ function sourceFixture() {
     const dom = new JSDOM(fs.readFileSync(path.join(__dirname, 'connect.html'), 'utf8'), { url: `https://mainiken.github.io/owa-calendar-bridge/connect.html#${requestId}`, runScripts: 'outside-only' });
     try {
       const w = dom.window, channel = w.document.getElementById('owa-google-auth-channel'); let callback;
-      w.google = { accounts: { oauth2: { initTokenClient(options) { callback = options.callback; return { requestAccessToken() {} }; }, hasGrantedAllScopes: () => true } } };
+      w.google = { accounts: { oauth2: { initCodeClient(options) { callback = options.callback; return { requestCode() {} }; } } } };
       w.eval(fs.readFileSync(path.join(__dirname, 'connect.js'), 'utf8'));
-      const send = (type, fields = {}) => { channel.setAttribute('data-response', JSON.stringify({ type, requestId, ...fields })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
+      const send = (type, fields = {}) => { channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.0', ...fields })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
       send('owa-google-oauth:ready'); w.document.getElementById('login').click();
-      callback({ access_token: 'synthetic-failed-login-token', expires_in: 3600, scope });
+      callback({ code: 'synthetic-failed-login-code', scope });
       send('owa-google-oauth:saved'); send('owa-google-oauth:failed', { message: 'Account verification failed' });
       assert.equal(w.document.getElementById('success-panel').hidden, true);
       assert.equal(w.document.getElementById('status').textContent, 'Account verification failed');

@@ -1,0 +1,29 @@
+services:
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    restart: unless-stopped
+    env_file: private/auth.env
+    volumes:
+      - oauth-data:/data
+    networks:
+      - web
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web
+      traefik.http.routers.owa-auth.rule: Host(`${AUTH_HOST}`) && PathPrefix(`/owa-calendar-auth/`)
+      traefik.http.routers.owa-auth.priority: "100"
+      traefik.http.routers.owa-auth.entrypoints: websecure
+      traefik.http.routers.owa-auth.tls.certresolver: letsencrypt
+      traefik.http.services.owa-auth.loadbalancer.server.port: "8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+volumes:
+  oauth-data:
+networks:
+  web:
+    external: true

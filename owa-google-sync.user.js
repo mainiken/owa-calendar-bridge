@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.4.0
+// @version      1.5.0
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
 // @match        https://mainiken.github.io/owa-calendar-bridge/connect.html*
@@ -18,13 +18,15 @@
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
 // @connect      www.googleapis.com
+// @connect      eovdienko.ru
 // ==/UserScript==
 
 (() => {
   'use strict';
   const VERSION = 1;
   const STORAGE = 'owa-google-bridge-v1';
-  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.4.0';
+  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.5.0';
+  const AUTH_SERVICE = 'https://eovdienko.ru/owa-calendar-auth';
   const AUTH_ORIGIN = 'https://mainiken.github.io';
   const AUTH_PREFIX = 'owa-google-auth:';
   const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
@@ -71,7 +73,7 @@
       channel.removeAttribute('data-command');
       if (!data || data.requestId !== requestId) return;
       const reply = (type, extra = {}) => {
-        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.4.0', ...extra }));
+        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.0', ...extra }));
         channel.dispatchEvent(new Event('owa-google-oauth:response', { bubbles: true }));
       };
       const pending = GM_getValue(key, null);
@@ -86,6 +88,11 @@
       }
       if (data.type === 'owa-google-oauth:hello') {
         reply('owa-google-oauth:ready');
+      } else if (data.type === 'owa-google-oauth:code') {
+        if (typeof data.code !== 'string' || data.code.length < 10 || data.code.length > 4096 || /\s/.test(data.code)) return;
+        completed = true;
+        GM_setValue(key, { ...pending, status: 'complete', code: data.code });
+        reply('owa-google-oauth:saved');
       } else if (data.type === 'owa-google-oauth:token') {
         const { accessToken, expiresIn, scope } = data;
         if (typeof accessToken !== 'string' || accessToken.length < 10 || accessToken.length > 4096 || /\s/.test(accessToken)) return;
@@ -101,11 +108,55 @@
 
   function currentAuth() {
     const auth = GM_getValue(authKey(), null);
-    if (!auth?.accessToken || auth.expires <= Date.now()) {
+    if (!auth?.sessionToken && (!auth?.accessToken || auth.expires <= Date.now())) {
       if (auth) GM_deleteValue(authKey());
       throw new Error('Нужно обновить вход Google. Нажми «Войти через Google» в настройках и затем повтори синхронизацию.');
     }
     return auth;
+  }
+
+  function authService(operation, body = {}, sessionToken) {
+    return new Promise((resolve, reject) => GM_xmlhttpRequest({
+      method: 'POST', url: `${AUTH_SERVICE}/${operation}`, anonymous: true, timeout: 45000,
+      headers: { 'Content-Type': 'application/json', Origin: AUTH_ORIGIN, 'X-Requested-With': 'OWACalendarBridge',
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) },
+      data: JSON.stringify(body),
+      onload(response) {
+        if (Number(response.status) === 401) {
+          const error = new Error('Google отозвал доступ. Подключи Google заново в настройках.');
+          error.reauthorize = true; reject(error); return;
+        }
+        if (Number(response.status) < 200 || Number(response.status) >= 300) {
+          reject(new Error('Не удалось продлить доступ Google. Повтори синхронизацию позже; сохранённое подключение не удалено.')); return;
+        }
+        try { resolve(JSON.parse(response.responseText)); } catch { reject(new Error('Служба подключения вернула непонятный ответ.')); }
+      },
+      onerror() { reject(new Error('Служба подключения Google недоступна. Проверь интернет и доступ Tampermonkey к eovdienko.ru.')); },
+      ontimeout() { reject(new Error('Служба подключения Google не ответила. Повтори синхронизацию позже.')); }
+    }));
+  }
+
+  let renewing = null;
+  async function ensureAuth(auth = currentAuth(), force = false) {
+    if (!auth.sessionToken || (!force && auth.accessToken && auth.expires > Date.now())) return auth;
+    const session = auth.sessionToken;
+    if (renewing?.session === session) return renewing.promise;
+    const promise = (async () => {
+      try {
+        const next = await authService('token', { force }, session);
+        if (next.account !== auth.account || typeof next.accessToken !== 'string' || !Number.isFinite(next.expires) || next.expires <= Date.now()) throw new Error('Не удалось подтвердить сохранённый аккаунт Google.');
+        const credential = { ...next, sessionToken: session };
+        if (GM_getValue(authKey(), null)?.sessionToken !== session) throw new Error('Подключение Google изменилось. Повтори синхронизацию.');
+        GM_setValue(authKey(), credential);
+        Object.assign(auth, credential);
+        return auth;
+      } catch (error) {
+        if (error.reauthorize && GM_getValue(authKey(), null)?.sessionToken === session) GM_deleteValue(authKey());
+        throw error;
+      }
+    })();
+    renewing = { session, promise };
+    try { return await promise; } finally { if (renewing?.promise === promise) renewing = null; }
   }
 
   async function connectGoogle() {
@@ -115,6 +166,7 @@
     setBusy(true);
     ui.dialogError.textContent = 'В новой вкладке нажми «Войти через Google», выбери аккаунт и разреши доступ.';
     let receipt = false;
+    let newCredential = null;
     try {
       // Open synchronously from the user gesture, before any await.
       const authTab = GM_openInTab(`${AUTH_PAGE}#${requestId}`, { active: true, insert: true });
@@ -125,13 +177,20 @@
         if (result?.status === 'complete') break;
         if (authTab?.closed) throw new Error('Вкладка входа закрыта. Нажми «Войти через Google», чтобы повторить.');
       }
-      if (result?.status !== 'complete' || result.tokenExpires <= Date.now()) throw new Error('Вход не завершён за 5 минут. Нажми «Войти через Google», чтобы повторить.');
-      const credential = { accessToken: result.accessToken, expires: result.tokenExpires };
+      if (result?.status !== 'complete' || (!result.code && result.tokenExpires <= Date.now())) throw new Error('Вход не завершён за 5 минут. Нажми «Войти через Google», чтобы повторить.');
+      const credential = result.code ? await authService('exchange', { code: result.code }) : { accessToken: result.accessToken, expires: result.tokenExpires };
+      if (result.code) newCredential = credential;
+      if (result.code && (typeof credential.sessionToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(credential.sessionToken) || typeof credential.accessToken !== 'string' || !Number.isFinite(credential.expires) || credential.expires <= Date.now())) throw new Error('Служба не подтвердила постоянное подключение Google.');
       const account = await googleApi('/oauth2/v3/userinfo', { credential });
       if (typeof account.sub !== 'string' || !account.sub || typeof account.email !== 'string') throw new Error('Google не вернул аккаунт. Разреши доступ к адресу почты при входе.');
       credential.account = account.sub;
       credential.email = account.email;
+      const previousAuth = GM_getValue(authKey(), null);
       GM_setValue(authKey(), credential);
+      newCredential = null;
+      if (previousAuth?.sessionToken && previousAuth.sessionToken !== credential.sessionToken) {
+        authService('disconnect', {}, previousAuth.sessionToken).catch(() => {});
+      }
       saveConfig({ ...config, mode: 'oauth', futureDays: Number(ui.future.value) });
       ui.mode.value = 'oauth';
       ui.dialogError.textContent = '';
@@ -142,6 +201,9 @@
       receipt = true;
       later(() => { try { authTab?.close?.(); } catch {} }, 2500);
     } catch (error) {
+      if (/^[A-Za-z0-9_-]{43}$/.test(newCredential?.sessionToken || '')) {
+        try { await authService('disconnect', {}, newCredential.sessionToken); } catch {}
+      }
       ui.dialogError.textContent = error.message;
       GM_setValue(key, { status: 'failed', message: error.message, expires: Date.now() + 60000 });
       receipt = true;
@@ -153,8 +215,12 @@
   }
 
   // No cookies, corporate identifiers, or Apps Script key are sent to this API.
-  function googleApi(path, { method = 'GET', body, credential = currentAuth(), allowed = [] } = {}) {
+  function googleApi(path, { method = 'GET', body, credential = currentAuth(), allowed = [], retried = false } = {}) {
     if (!path.startsWith('/calendar/v3/') && path !== '/oauth2/v3/userinfo') throw new Error('Недопустимый путь Google API.');
+    if (credential.sessionToken && (!credential.accessToken || credential.expires <= Date.now())) {
+      return ensureAuth(credential).then(auth => googleApi(path, { method, body, credential: auth, allowed, retried }));
+    }
+    const sentToken = credential.accessToken;
     return new Promise((resolve, reject) => GM_xmlhttpRequest({
       method, url: 'https://www.googleapis.com' + path, anonymous: true, timeout: 45000,
       headers: { Authorization: `Bearer ${credential.accessToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -162,7 +228,13 @@
       onload(response) {
         const code = Number(response.status);
         if (allowed.includes(code)) { resolve({ httpStatus: code }); return; }
-        if (code === 401) { GM_deleteValue(authKey()); reject(new Error('Вход Google истёк или отозван. Подключи Google повторно в настройках.')); return; }
+        if (code === 401) {
+          if (credential.sessionToken && !retried) {
+            ensureAuth(credential, true).then(auth => googleApi(path, { method, body, credential: auth, allowed, retried: true })).then(resolve, reject); return;
+          }
+          if (!credential.sessionToken && GM_getValue(authKey(), null)?.accessToken === sentToken) GM_deleteValue(authKey());
+          reject(new Error(credential.sessionToken ? 'Google не принял обновлённый доступ. Повтори синхронизацию позже.' : 'Вход Google истёк или отозван. Подключи Google повторно в настройках.')); return;
+        }
         if (code < 200 || code >= 300) {
           let reason = '';
           try { reason = JSON.parse(response.responseText)?.error?.errors?.[0]?.reason || ''; } catch {}
@@ -596,7 +668,7 @@
     setBusy(true);
     try {
       status('Проверяю подключение Google…');
-      const auth = config.mode === 'oauth' ? currentAuth() : null;
+      const auth = config.mode === 'oauth' ? await ensureAuth() : null;
       if (!auth) { connection(config.connection); await google({ op: 'ping', version: VERSION }); }
       const snapshot = await collect();
       lastSnapshot = snapshot;
@@ -673,7 +745,7 @@
 
   function updateAccountLabel() {
     const auth = GM_getValue(authKey(), null);
-    ui.account.textContent = auth?.email ? `${auth.email}${auth.expires <= Date.now() ? ' — нужно войти повторно' : ' — подключён'}` : 'Google пока не подключён.';
+    ui.account.textContent = auth?.email ? `${auth.email}${auth.sessionToken ? ' — подключён, доступ продлевается автоматически' : auth.expires <= Date.now() ? ' — нужно войти повторно' : ' — подключён; войди ещё раз для автоматического продления'}` : 'Google пока не подключён.';
     ui.oauthDisconnect.hidden = !auth;
   }
 
@@ -720,7 +792,14 @@
     ui.settings.addEventListener('click', settings);
     ui.mode.addEventListener('change', updateModeDisplay);
     ui.oauthLogin.addEventListener('click', connectGoogle);
-    ui.oauthDisconnect.addEventListener('click', () => {
+    ui.oauthDisconnect.addEventListener('click', async () => {
+      const auth = GM_getValue(authKey(), null);
+      if (auth?.sessionToken) {
+        setBusy(true);
+        try { await authService('disconnect', {}, auth.sessionToken); }
+        catch (error) { if (!error.reauthorize) { ui.dialogError.textContent = 'Не удалось отключить Google: проверь соединение и повтори. ' + error.message; return; } }
+        finally { setBusy(false); }
+      }
       GM_deleteValue(authKey()); updateAccountLabel();
       ui.dialogError.textContent = 'Вход удалён с этого устройства. Для отзыва разрешения приложению используй myaccount.google.com/connections. Копии встреч сохранены.';
     });
@@ -739,7 +818,7 @@
 
   // The test harness exposes internals only when evaluating this source in an isolated VM.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse, googleApi, syncOAuth, syncAppsScript, currentAuth, oauthOwned };
+    module.exports = { connection, instant, flag, cancelled, dateInZone, normalize, findRange, collect, owa, hash, fold, icsEscape, header, shape, googleResponse, googleApi, syncOAuth, syncAppsScript, currentAuth, ensureAuth, oauthOwned };
   } else {
     GM_setValue(STORAGE, config);
     mount();

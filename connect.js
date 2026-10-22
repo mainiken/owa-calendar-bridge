@@ -42,6 +42,7 @@
       show('Userscript запущен, но запрос входа истёк или открыт из другой копии скрипта. Закрой эту вкладку и начни вход заново кнопкой в OWA. Оставь включённой одну копию userscript.', 'error'); return;
     }
     if (response.type === 'owa-google-oauth:ready' && !delivered && !waiting) {
+      if (response.version !== '1.5.0') { show('Обнови userscript до версии 1.5.0 и начни подключение заново из OWA: эта версия сохраняет доступ с автоматическим продлением.', 'error'); return; }
       ready = true; login.disabled = !window.google?.accounts?.oauth2;
       if (!login.disabled) { clearInterval(timer); show('Всё готово. Нажми «Войти через Google».'); }
     }
@@ -68,7 +69,7 @@
       return;
     }
     if (checks === 40) {
-      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.4.0, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
+      if (!ready) show('На этой странице userscript не запустился. Обнови его до версии 1.5.0, разреши Tampermonkey доступ к mainiken.github.io и запуск пользовательских скриптов в браузере. Проверка продолжится автоматически. Если менял настройки расширения, закрой эту вкладку и начни вход заново из OWA.', 'error');
       else if (!window.google?.accounts?.oauth2) show('Не загрузилось окно Google. Проверь доступ к accounts.google.com и блокировщики, затем обнови страницу.', 'error');
     }
     send({ type: 'owa-google-oauth:hello' });
@@ -76,16 +77,12 @@
   document.getElementById('close').addEventListener('click', () => window.close());
   login.addEventListener('click', () => {
     if (!ready || delivered || waiting || !window.google?.accounts?.oauth2) return;
-    client ||= google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID, scope: `openid ${EMAIL_SCOPE} ${CALENDAR_SCOPE}`, include_granted_scopes: false,
+    client ||= google.accounts.oauth2.initCodeClient({
+      client_id: CLIENT_ID, scope: `openid ${EMAIL_SCOPE} ${CALENDAR_SCOPE}`, include_granted_scopes: false, ux_mode: 'popup', select_account: true,
       callback(response) {
-        if (response.error || !response.access_token) { login.disabled = false; show('Google не выдал доступ. Повтори вход и подтверди разрешения.', 'error'); return; }
-        if (!google.accounts.oauth2.hasGrantedAllScopes(response, CALENDAR_SCOPE, EMAIL_SCOPE)) {
-          login.disabled = false; show('Нужны разрешения на календарь приложения и адрес аккаунта. Повтори вход и отметь оба разрешения.', 'error'); return;
-        }
+        if (response.error || !response.code) { login.disabled = false; show('Google не выдал доступ. Повтори вход и подтверди разрешения.', 'error'); return; }
         waiting = true; show('Передаю подключение в OWA…');
-        send({ type: 'owa-google-oauth:token', accessToken: response.access_token,
-          expiresIn: Number(response.expires_in), scope: response.scope });
+        send({ type: 'owa-google-oauth:code', code: response.code });
         setTimeout(() => { if (waiting) { waiting = false; login.disabled = false; show('Не удалось передать подключение в userscript. Проверь доступ Tampermonkey к этой странице и повтори вход из OWA.', 'error'); } }, 5000);
       },
       error_callback(error) {
@@ -94,6 +91,6 @@
       }
     });
     login.disabled = true; show('Выбери аккаунт и разреши доступ в окне Google.');
-    client.requestAccessToken({ prompt: 'select_account' });
+    client.requestCode();
   });
 })();
