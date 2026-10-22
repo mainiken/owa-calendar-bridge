@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OWA → Google: мой календарь
 // @namespace    local.calendar-bridge
-// @version      1.5.0
+// @version      1.5.1
 // @description  Ручная синхронизация встреч из открытого OWA в отдельный Google Календарь.
 // @match        https://*/owa/*
 // @match        https://mainiken.github.io/owa-calendar-bridge/connect.html*
@@ -25,7 +25,7 @@
   'use strict';
   const VERSION = 1;
   const STORAGE = 'owa-google-bridge-v1';
-  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.5.0';
+  const AUTH_PAGE = 'https://mainiken.github.io/owa-calendar-bridge/connect.html?v=1.5.1';
   const AUTH_SERVICE = 'https://eovdienko.ru/owa-calendar-auth';
   const AUTH_ORIGIN = 'https://mainiken.github.io';
   const AUTH_PREFIX = 'owa-google-auth:';
@@ -73,7 +73,7 @@
       channel.removeAttribute('data-command');
       if (!data || data.requestId !== requestId) return;
       const reply = (type, extra = {}) => {
-        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.0', ...extra }));
+        channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.1', ...extra }));
         channel.dispatchEvent(new Event('owa-google-oauth:response', { bubbles: true }));
       };
       const pending = GM_getValue(key, null);
@@ -122,14 +122,23 @@
         ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) },
       data: JSON.stringify(body),
       onload(response) {
+        let result;
+        try { result = JSON.parse(response.responseText); } catch {}
         if (Number(response.status) === 401) {
-          const error = new Error('Google отозвал доступ. Подключи Google заново в настройках.');
-          error.reauthorize = true; reject(error); return;
+          const error = new Error(operation === 'exchange' ? 'Код входа Google истёк или уже использован. Начни вход заново из OWA.' : 'Google отозвал доступ. Подключи Google заново в настройках.');
+          error.reauthorize = operation !== 'exchange'; reject(error); return;
         }
         if (Number(response.status) < 200 || Number(response.status) >= 300) {
-          reject(new Error('Не удалось продлить доступ Google. Повтори синхронизацию позже; сохранённое подключение не удалено.')); return;
+          const messages = {
+            missing_scopes: 'Google не предоставил все разрешения. При повторном входе отметь доступ к календарю приложения и адресу аккаунта.',
+            offline_access_required: 'Google не выдал доступ с автоматическим продлением. Подключи аккаунт заново и подтверди разрешения.',
+            invalid_code: 'Google вернул неполный код подключения. Начни вход заново из OWA.',
+            invalid_request: 'Служба отклонила запрос подключения. Обнови userscript и повтори вход.',
+            rate_limited: 'Слишком много попыток входа. Подожди минуту и повтори.'
+          };
+          reject(new Error(messages[result?.error] || (operation === 'exchange' ? 'Не удалось подключить Google: служба временно недоступна. Повтори вход позже.' : 'Не удалось продлить доступ Google. Повтори синхронизацию позже; сохранённое подключение не удалено.'))); return;
         }
-        try { resolve(JSON.parse(response.responseText)); } catch { reject(new Error('Служба подключения вернула непонятный ответ.')); }
+        if (result && typeof result === 'object') resolve(result); else reject(new Error('Служба подключения вернула непонятный ответ.'));
       },
       onerror() { reject(new Error('Служба подключения Google недоступна. Проверь интернет и доступ Tampermonkey к eovdienko.ru.')); },
       ontimeout() { reject(new Error('Служба подключения Google не ответила. Повтори синхронизацию позже.')); }

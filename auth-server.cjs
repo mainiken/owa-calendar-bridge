@@ -11,7 +11,7 @@ class HttpError extends Error {
   constructor(status, code) { super(code); this.status = status; }
 }
 
-function createService({ clientId, clientSecret, encryptionKey, directory, origin = 'https://mainiken.github.io', fetchImpl = fetch, now = Date.now }) {
+function createService({ clientId, clientSecret, encryptionKey, directory, origin = 'https://mainiken.github.io', fetchImpl = fetch, now = Date.now, audit = () => {} }) {
   const key = Buffer.from(encryptionKey || '', 'base64');
   if (!clientId || !clientSecret || key.length !== 32 || !directory) throw new Error('Missing OAuth service configuration');
   const active = new Map();
@@ -56,7 +56,11 @@ function createService({ clientId, clientSecret, encryptionKey, directory, origi
     if (typeof code !== 'string' || code.length < 10 || code.length > 4096 || /\s/.test(code)) throw new HttpError(400, 'invalid_code');
     const token = await googleToken({ code, grant_type: 'authorization_code', redirect_uri: origin });
     const scopes = new Set((token.scope || '').split(' '));
-    if (!scopes.has(CALENDAR_SCOPE) || !scopes.has(EMAIL_SCOPE)) throw new HttpError(400, 'missing_scopes');
+    const calendarGranted = scopes.has(CALENDAR_SCOPE), emailGranted = scopes.has(EMAIL_SCOPE) || scopes.has('email');
+    if (!calendarGranted || !emailGranted) {
+      audit({ event: 'oauth_missing_scopes', calendarGranted, emailGranted, scopePresent: typeof token.scope === 'string' });
+      throw new HttpError(400, 'missing_scopes');
+    }
     if (typeof token.refresh_token !== 'string' || !token.refresh_token) throw new HttpError(409, 'offline_access_required');
     const response = await fetchImpl('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${token.access_token}` }, signal: AbortSignal.timeout(20000), redirect: 'error'
@@ -128,12 +132,17 @@ function createService({ clientId, clientSecret, encryptionKey, directory, origi
       if (req.url === '/owa-calendar-auth/token') return send(200, await refresh(session, data.force === true));
       if (req.url === '/owa-calendar-auth/disconnect') { await disconnect(session); return send(200, { ok: true }); }
       throw new HttpError(404, 'not_found');
-    } catch (error) { send(error.status || 503, { error: error.status ? error.message : 'service_unavailable' }); }
+    } catch (error) {
+      const operation = ['/exchange', '/token', '/disconnect'].find(suffix => req.url === '/owa-calendar-auth' + suffix)?.slice(1) || 'other';
+      const code = error instanceof HttpError ? error.message : 'service_unavailable';
+      audit({ event: 'oauth_request_failed', operation, status: error.status || 503, code });
+      send(error.status || 503, { error: code });
+    }
   }
   return { handler, exchange, refresh, disconnect };
 }
 module.exports = { createService };
 if (require.main === module) {
-  const service = createService({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, encryptionKey: process.env.AUTH_ENCRYPTION_KEY, directory: process.env.AUTH_DATA_DIR || '/data' });
+  const service = createService({ clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, encryptionKey: process.env.AUTH_ENCRYPTION_KEY, directory: process.env.AUTH_DATA_DIR || '/data', audit: event => console.warn(JSON.stringify(event)) });
   http.createServer(service.handler).listen(Number(process.env.PORT || 8080), '0.0.0.0', () => console.log('OAuth renewal service listening'));
 }

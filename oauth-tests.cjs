@@ -181,7 +181,12 @@ function sourceFixture() {
       w.document.getElementById('login').click();
       assert.ok(settings.scope.includes(scope)); assert.ok(settings.scope.includes(emailScope)); assert.ok(!settings.scope.includes('auth/calendar ')); assert.equal(settings.client_secret, undefined);
       assert.equal(requested, true); assert.equal(settings.ux_mode, 'popup');
-      settings.callback({ code: 'synthetic-auth-code', scope });
+      settings.callback({ code: 'synthetic-incomplete-code', scope });
+      assert.equal(messages.some(item => item.type === 'owa-google-oauth:code'), false);
+      assert.ok(w.document.getElementById('status').textContent.includes('Не все разрешения'));
+      assert.equal(w.document.getElementById('login').disabled, false);
+      w.document.getElementById('login').click();
+      settings.callback({ code: 'synthetic-auth-code', scope: `${scope} openid email` });
       const delivered = messages.find(item => item.type === 'owa-google-oauth:code');
       assert.equal(delivered.code, 'synthetic-auth-code'); assert.equal(delivered.accessToken, undefined);
       assert.equal(delivered.requestId, requestId); assert.equal(channel.hasAttribute('data-command'), false);
@@ -344,7 +349,7 @@ function sourceFixture() {
       w.eval(fs.readFileSync(path.join(__dirname, 'connect.js'), 'utf8'));
       const send = (type, fields = {}) => { channel.setAttribute('data-response', JSON.stringify({ type, requestId, version: '1.5.0', ...fields })); channel.dispatchEvent(new w.Event('owa-google-oauth:response', { bubbles: true })); };
       send('owa-google-oauth:ready'); w.document.getElementById('login').click();
-      callback({ code: 'synthetic-failed-login-code', scope });
+      callback({ code: 'synthetic-failed-login-code', scope: `${scope} ${emailScope}` });
       send('owa-google-oauth:saved'); send('owa-google-oauth:failed', { message: 'Account verification failed' });
       assert.equal(w.document.getElementById('success-panel').hidden, true);
       assert.equal(w.document.getElementById('status').textContent, 'Account verification failed');

@@ -90,6 +90,17 @@ async function test(name, action) { await action(); console.log('PASS ' + name);
       assert.deepEqual(await fs.readdir(f.directory), []);
     } finally { await f.close(); }
   });
+  await test('Google OpenID email alias is accepted without relaxing calendar permission', async () => {
+    const f = await fixture();
+    try {
+      f.state.scope = `openid email ${calendarScope}`;
+      assert.ok((await f.service.exchange('synthetic-auth-code')).sessionToken);
+      f.state.scope = 'openid email';
+      await assert.rejects(f.service.exchange('synthetic-auth-code'), error => error.status === 400 && error.message === 'missing_scopes');
+      f.state.scope = calendarScope;
+      await assert.rejects(f.service.exchange('synthetic-auth-code'), error => error.status === 400 && error.message === 'missing_scopes');
+    } finally { await f.close(); }
+  });
   await test('HTTP rejects cross-origin exchange and cookie-only access, redacts secrets', async () => {
     const f = await fixture(), server = http.createServer(f.service.handler);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -139,5 +150,5 @@ async function test(name, action) { await action(); console.log('PASS ' + name);
     failure = 401;
     await assert.rejects(api.ensureAuth(), /отозвал/); assert.equal(storage.has(authKey), false);
   });
-  console.log('\n6 persistent authorization checks passed');
+  console.log('\n7 persistent authorization checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -42,7 +42,7 @@
       show('Userscript запущен, но запрос входа истёк или открыт из другой копии скрипта. Закрой эту вкладку и начни вход заново кнопкой в OWA. Оставь включённой одну копию userscript.', 'error'); return;
     }
     if (response.type === 'owa-google-oauth:ready' && !delivered && !waiting) {
-      if (response.version !== '1.5.0') { show('Обнови userscript до версии 1.5.0 и начни подключение заново из OWA: эта версия сохраняет доступ с автоматическим продлением.', 'error'); return; }
+      if (!['1.5.0', '1.5.1'].includes(response.version)) { show('Обнови userscript до версии 1.5.1 и начни подключение заново из OWA: эта версия сохраняет доступ с автоматическим продлением.', 'error'); return; }
       ready = true; login.disabled = !window.google?.accounts?.oauth2;
       if (!login.disabled) { clearInterval(timer); show('Всё готово. Нажми «Войти через Google».'); }
     }
@@ -81,6 +81,11 @@
       client_id: CLIENT_ID, scope: `openid ${EMAIL_SCOPE} ${CALENDAR_SCOPE}`, include_granted_scopes: false, ux_mode: 'popup', select_account: true,
       callback(response) {
         if (response.error || !response.code) { login.disabled = false; show('Google не выдал доступ. Повтори вход и подтверди разрешения.', 'error'); return; }
+        const scopes = new Set((response.scope || '').split(/\s+/));
+        if (!scopes.has(CALENDAR_SCOPE) || (!scopes.has(EMAIL_SCOPE) && !scopes.has('email'))) {
+          login.disabled = false;
+          show('Не все разрешения подтверждены. Нажми «Войти через Google» и отметь доступ к календарю приложения и адресу аккаунта.', 'error'); return;
+        }
         waiting = true; show('Передаю подключение в OWA…');
         send({ type: 'owa-google-oauth:code', code: response.code });
         setTimeout(() => { if (waiting) { waiting = false; login.disabled = false; show('Не удалось передать подключение в userscript. Проверь доступ Tampermonkey к этой странице и повтори вход из OWA.', 'error'); } }, 5000);
